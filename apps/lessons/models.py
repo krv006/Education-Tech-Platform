@@ -21,8 +21,16 @@ class Course(TimeStampedUUIDModel, SoftDeleteModel):
 
 
 class Enrollment(TimeStampedUUIDModel):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Kutilmoqda'
+        APPROVED = 'approved', 'Tasdiqlangan'
+        DECLINED = 'declined', 'Rad etilgan'
+
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='enrollments')
     student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='enrollments')
+    # O'quvchi/ota-ona so'rovi PENDING bo'lib turadi — kurs o'qituvchisi tasdiqlaganda APPROVED.
+    # O'qituvchi o'zi biriktirsa darhol APPROVED (default mavjud yozuvlar uchun ham).
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.APPROVED, db_index=True)
 
     class Meta:
         constraints = [
@@ -30,7 +38,7 @@ class Enrollment(TimeStampedUUIDModel):
         ]
 
     def __str__(self):
-        return f'{self.student.username} @ {self.course.title}'
+        return f'{self.student.username} @ {self.course.title} [{self.status}]'
 
 
 class Lesson(TimeStampedUUIDModel, SoftDeleteModel):

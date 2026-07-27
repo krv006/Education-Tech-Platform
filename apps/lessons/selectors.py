@@ -7,18 +7,20 @@ from django.db.models import QuerySet
 
 from apps.accounts.models import ParentChildLink, User
 
-from .models import Attendance, Course, Lesson
+from .models import Attendance, Course, Enrollment, Lesson
 
 _APPROVED = ParentChildLink.Status.APPROVED
+_ENROLLED = Enrollment.Status.APPROVED
 
 
 def courses_for(user: User) -> QuerySet[Course]:
     if user.role == User.Role.TEACHER:
         return Course.objects.filter(teacher=user)
     if user.role == User.Role.STUDENT:
-        return Course.objects.filter(enrollments__student=user)
+        return Course.objects.filter(enrollments__student=user, enrollments__status=_ENROLLED)
     if user.role == User.Role.PARENT:
         return Course.objects.filter(
+            enrollments__status=_ENROLLED,
             enrollments__student__parent_links__parent=user,
             enrollments__student__parent_links__status=_APPROVED,
         ).distinct()
@@ -30,9 +32,12 @@ def lessons_for(user: User) -> QuerySet[Lesson]:
     if user.role == User.Role.TEACHER:
         return qs.filter(course__teacher=user)
     if user.role == User.Role.STUDENT:
-        return qs.filter(course__enrollments__student=user)
+        return qs.filter(
+            course__enrollments__student=user, course__enrollments__status=_ENROLLED,
+        )
     if user.role == User.Role.PARENT:
         return qs.filter(
+            course__enrollments__status=_ENROLLED,
             course__enrollments__student__parent_links__parent=user,
             course__enrollments__student__parent_links__status=_APPROVED,
         ).distinct()

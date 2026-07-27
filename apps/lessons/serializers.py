@@ -7,12 +7,27 @@ from .models import Attendance, Course, Enrollment, Lesson
 
 class CourseSerializer(serializers.ModelSerializer):
     teacher = UserSerializer(read_only=True)
-    student_count = serializers.IntegerField(source='enrollments.count', read_only=True)
+    student_count = serializers.SerializerMethodField()
+    my_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
-        fields = ['id', 'teacher', 'title', 'subject', 'description', 'is_active', 'student_count', 'created_at']
+        fields = [
+            'id', 'teacher', 'title', 'subject', 'description', 'is_active',
+            'student_count', 'my_status', 'created_at',
+        ]
         read_only_fields = ['is_active']
+
+    def get_student_count(self, obj) -> int:
+        return obj.enrollments.filter(status=Enrollment.Status.APPROVED).count()
+
+    def get_my_status(self, obj) -> str | None:
+        """So'rov yuborgan foydalanuvchining shu kursdagi yozilish holati (katalog uchun)."""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        enrollment = obj.enrollments.filter(student=request.user).first()
+        return enrollment.status if enrollment else None
 
 
 class LessonSerializer(serializers.ModelSerializer):
@@ -33,7 +48,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Enrollment
-        fields = ['id', 'course', 'course_title', 'student', 'created_at']
+        fields = ['id', 'course', 'course_title', 'student', 'status', 'created_at']
 
 
 class AttendanceSerializer(serializers.ModelSerializer):

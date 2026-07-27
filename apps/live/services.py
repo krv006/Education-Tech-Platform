@@ -8,7 +8,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from apps.accounts.models import User
 from apps.core import audit
 from apps.lessons import services as lesson_services
-from apps.lessons.models import Lesson
+from apps.lessons.models import Enrollment, Lesson
 
 
 def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
@@ -23,7 +23,9 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         raise NotFound('Dars topilmadi.')
 
     is_teacher = lesson.course.teacher_id == user.id
-    is_enrolled = lesson.course.enrollments.filter(student=user).exists()
+    is_enrolled = lesson.course.enrollments.filter(
+        student=user, status=Enrollment.Status.APPROVED,
+    ).exists()
     if not (is_teacher or is_enrolled):
         raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):

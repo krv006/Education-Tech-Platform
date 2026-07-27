@@ -28,7 +28,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'user.manage',
     },
     TEACHER: {
-        'course.create', 'course.edit', 'course.view',
+        'course.create', 'course.edit', 'course.view', 'course.enroll',
         'lesson.schedule', 'lesson.edit', 'lesson.cancel', 'lesson.finish', 'lesson.view',
         'room.token', 'room.moderate',
         'attendance.view',

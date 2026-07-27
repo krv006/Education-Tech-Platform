@@ -31,6 +31,14 @@ class CourseLessonFlowTests(APITestCase):
     def auth(self, token):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
 
+    def approve_all_requests(self):
+        """O'qituvchi sifatida barcha kutilayotgan yozilish so'rovlarini tasdiqlaydi."""
+        self.auth(self.teacher_token)
+        for req in self.client.get('/api/v1/courses/requests/').json()['results']:
+            self.client.post('/api/v1/courses/requests/respond/', {
+                'enrollment_id': req['id'], 'action': 'approve',
+            })
+
     def test_student_cannot_create_course(self):
         self.auth(self.child_token)
         resp = self.client.post('/api/v1/courses/', {'title': 'Hack'})
@@ -40,6 +48,7 @@ class CourseLessonFlowTests(APITestCase):
         self.auth(self.parent_token)
         resp = self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
         self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['status'], 'pending')  # o'qituvchi tasdig'ini kutadi
 
         # another parent with no link cannot enroll this child
         register(self.client, 'p2', 'parent')
@@ -48,9 +57,32 @@ class CourseLessonFlowTests(APITestCase):
         resp = self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
         self.assertEqual(resp.status_code, 403)
 
+    def test_pending_enrollment_gives_no_access_until_approved(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+
+        # tasdiqlanmagan — token yo'q, darslar ko'rinmaydi
+        self.auth(self.child_token)
+        resp = self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(len(self.client.get('/api/v1/lessons/').json()['results']), 0)
+
+        # o'qituvchi tasdiqladi — endi kiradi
+        self.approve_all_requests()
+        self.auth(self.child_token)
+        resp = self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_teacher_direct_enroll_is_approved(self):
+        self.auth(self.teacher_token)
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student': 's1'})
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['status'], 'approved')
+
     def test_room_token_flow_and_attendance(self):
         self.auth(self.parent_token)
         self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
 
         # student joins -> attendance stamped
         self.auth(self.child_token)
@@ -85,6 +117,7 @@ class CourseLessonFlowTests(APITestCase):
     def test_parent_sees_only_linked_child_attendance(self):
         self.auth(self.parent_token)
         self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
         self.auth(self.child_token)
         self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
 
