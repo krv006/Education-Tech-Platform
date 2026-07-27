@@ -270,3 +270,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+
+# Django migrations — git'ga qo'shilmaydi (har muhitda makemigrations qilinadi)
+**/migrations/*.py
+!**/migrations/__init__.py
