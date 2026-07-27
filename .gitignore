@@ -274,3 +274,7 @@ cython_debug/
 # Django migrations — git'ga qo'shilmaydi (har muhitda makemigrations qilinadi)
 **/migrations/*.py
 !**/migrations/__init__.py
+
+# loyiha skriptlari kerak
+!scripts/
+!scripts/**
