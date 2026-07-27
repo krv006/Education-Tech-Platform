@@ -1,0 +1,13 @@
+# LiveKit dev config — self-hosted (see docker-compose.yml).
+# Production: change keys, set proper domain + TLS (turn/tls), host in Uzbekistan
+# (data localization — see Tanqidiy Tahlil v4, section 7).
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+keys:
+  devkey: devsecret_change_me_32chars_min!
+logging:
+  level: info
