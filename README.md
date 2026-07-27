@@ -3,6 +3,8 @@
 Onlayn ta'lim platformasi: jonli video darslar (LiveKit), avtomatik davomat va
 rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 
+> Arxitektura qoidalari: [ARCHITECTURE.md](ARCHITECTURE.md) — yangi kod yozishdan oldin o'qing.
+
 ## Stack
 
 - **Backend:** Django + DRF + SimpleJWT (`root/` — settings, `apps/` — modullar)
