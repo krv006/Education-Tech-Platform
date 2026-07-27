@@ -12,7 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    """Public registration — only teacher or parent. Students are created by a parent."""
+    """Ochiq ro'yxatdan o'tish — faqat o'qituvchi yoki ota-ona (bola hisobini ota-ona ochadi)."""
 
     password = serializers.CharField(write_only=True, validators=[validate_password])
     role = serializers.ChoiceField(choices=[User.Role.TEACHER, User.Role.PARENT])
@@ -21,35 +21,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'password', 'first_name', 'last_name', 'role', 'phone']
 
-    def create(self, validated_data):
-        password = validated_data.pop('password')
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
-        return user
-
 
 class ChildCreateSerializer(serializers.ModelSerializer):
-    """Parent creates a child account; the link is approved immediately (FRD: auth.child_create)."""
-
     password = serializers.CharField(write_only=True, validators=[validate_password])
 
     class Meta:
         model = User
         fields = ['id', 'username', 'password', 'first_name', 'last_name', 'invite_code']
         read_only_fields = ['invite_code']
-
-    def create(self, validated_data):
-        password = validated_data.pop('password')
-        child = User(role=User.Role.STUDENT, **validated_data)
-        child.set_password(password)
-        child.save()
-        ParentChildLink.objects.create(
-            parent=self.context['request'].user,
-            student=child,
-            status=ParentChildLink.Status.APPROVED,
-        )
-        return child
 
 
 class LinkSerializer(serializers.ModelSerializer):
@@ -63,13 +42,6 @@ class LinkSerializer(serializers.ModelSerializer):
 
 class LinkRequestSerializer(serializers.Serializer):
     invite_code = serializers.CharField(max_length=12)
-
-    def validate_invite_code(self, value):
-        try:
-            self.student = User.objects.get(invite_code=value.strip().upper(), role=User.Role.STUDENT)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Bunday taklif kodi topilmadi.")
-        return value
 
 
 class LinkRespondSerializer(serializers.Serializer):

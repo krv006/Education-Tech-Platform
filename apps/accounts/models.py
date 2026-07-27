@@ -1,8 +1,11 @@
 import secrets
 import string
+import uuid
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+
+from apps.core.models import TimeStampedUUIDModel
 
 
 def generate_invite_code() -> str:
@@ -12,15 +15,19 @@ def generate_invite_code() -> str:
 
 class User(AbstractUser):
     class Role(models.TextChoices):
+        SUPER_ADMIN = 'super_admin', 'Super Admin'
         ADMIN = 'admin', 'Admin'
         TEACHER = 'teacher', "O'qituvchi"
         STUDENT = 'student', "O'quvchi"
         PARENT = 'parent', 'Ota-ona'
 
-    role = models.CharField(max_length=16, choices=Role.choices, default=Role.STUDENT)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    role = models.CharField(max_length=16, choices=Role.choices, default=Role.STUDENT, db_index=True)
     phone = models.CharField(max_length=20, unique=True, null=True, blank=True)
     # Student's invite code — parent enters it to request a link (consent flow).
     invite_code = models.CharField(max_length=12, unique=True, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
         if self.role == self.Role.STUDENT and not self.invite_code:
@@ -34,7 +41,7 @@ class User(AbstractUser):
         return f'{self.username} ({self.get_role_display()})'
 
 
-class ParentChildLink(models.Model):
+class ParentChildLink(TimeStampedUUIDModel):
     """Parent ↔ student connection. Analytics open to the parent only while APPROVED.
 
     Two ways a link is created:
@@ -50,11 +57,11 @@ class ParentChildLink(models.Model):
 
     parent = models.ForeignKey(User, on_delete=models.CASCADE, related_name='child_links')
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='parent_links')
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
-    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
     responded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(fields=['parent', 'student'], name='unique_parent_student'),
         ]
@@ -63,7 +70,7 @@ class ParentChildLink(models.Model):
         return f'{self.parent.username} -> {self.student.username} [{self.status}]'
 
 
-class Consent(models.Model):
+class Consent(TimeStampedUUIDModel):
     """Per-child consent flags managed by the linked parent (FRD: privacy.consent_collect)."""
 
     class Kind(models.TextChoices):
@@ -75,7 +82,6 @@ class Consent(models.Model):
     granted_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='granted_consents')
     kind = models.CharField(max_length=16, choices=Kind.choices)
     granted = models.BooleanField(default=False)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
