@@ -1,0 +1,267 @@
+/* ─── Dizayn tokenlari — fokus-web-1.html prototipidan ─── */
+:root {
+  --indigo: #5b5bf0;
+  --indigo-d: #4242d4;
+  --indigo-bg: #eeeeff;
+  --green: #22c55e;
+  --green-d: #15a34a;
+  --green-bg: #e7f8ee;
+  --amber: #fb923c;
+  --amber-d: #ea7c28;
+  --red: #ef4444;
+  --ink: #16172e;
+  --ink-soft: #23254a;
+  --muted: #7a7e9c;
+  --bg: #f0f1fa;
+  --surface: #fff;
+  --line: #e7e9f5;
+  --line2: #d4d7ef;
+  --r: 14px;
+  --r-lg: 20px;
+  --shadow: 0 4px 16px rgba(22, 23, 46, 0.1);
+  --shadow-md: 0 8px 28px rgba(22, 23, 46, 0.13);
+  --font-head: 'Plus Jakarta Sans', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-head);
+  letter-spacing: -0.3px;
+}
+
+button {
+  font-family: var(--font-head);
+  cursor: pointer;
+}
+
+input, select {
+  font-family: var(--font-body);
+}
+
+a {
+  color: var(--indigo);
+  text-decoration: none;
+}
+
+/* ─── Umumiy komponent klasslar ─── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 20px;
+}
+
+.btn {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-weight: 700;
+  font-size: 14px;
+  transition: 0.18s;
+  color: #fff;
+  background: var(--indigo);
+}
+.btn:hover { background: var(--indigo-d); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.secondary {
+  background: var(--bg);
+  color: var(--ink-soft);
+}
+.btn.secondary:hover { background: var(--line); }
+.btn.danger { background: var(--red); }
+.btn.danger:hover { background: #dc2626; }
+.btn.sm { padding: 8px 14px; font-size: 12.5px; border-radius: 10px; }
+
+.input {
+  width: 100%;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  outline: none;
+  transition: 0.18s;
+  background: var(--surface);
+}
+.input:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(91, 91, 240, 0.12);
+}
+
+.field { margin-bottom: 14px; }
+.field label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.error-box {
+  background: #fef2f2;
+  color: #dc2626;
+  border-radius: 11px;
+  padding: 11px 13px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+.badge.green { background: var(--green-bg); color: var(--green-d); }
+.badge.indigo { background: var(--indigo-bg); color: var(--indigo); }
+.badge.amber { background: #fff7ee; color: var(--amber-d); }
+.badge.red { background: #fef2f2; color: var(--red); }
+
+.muted { color: var(--muted); }
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.table tr:last-child td { border-bottom: none; }
+
+/* ─── Layout ─── */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 24px;
+  height: 60px;
+}
+.logo {
+  font-family: var(--font-head);
+  font-weight: 800;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.logo span {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--indigo), var(--indigo-d));
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+}
+.app-main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 60px;
+}
+
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 700px) {
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+.stack { display: flex; flex-direction: column; gap: 14px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+
+/* ─── Auth sahifalari ─── */
+.auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 30px 28px;
+  box-shadow: var(--shadow-md);
+}
+.auth-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  margin: 0 auto 16px;
+  background: linear-gradient(135deg, var(--indigo), var(--indigo-d));
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  box-shadow: 0 12px 26px rgba(91, 91, 240, 0.35);
+}
+.auth-card h1 {
+  text-align: center;
+  font-size: 22px;
+  margin-bottom: 4px;
+}
+.auth-sub {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 22px;
+}
+.auth-foot {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 16px;
+}
+
+/* ─── Dars xonasi ─── */
+.room-wrap {
+  height: calc(100vh - 60px);
+  background: #0f1022;
+}
+.room-wrap .lk-video-conference { height: 100%; }
