@@ -22,6 +22,16 @@
   --shadow-md: 0 8px 28px rgba(22, 23, 46, 0.13);
   --font-head: 'Plus Jakarta Sans', sans-serif;
   --font-body: 'Inter', sans-serif;
+
+  /* Shrift shkalasi — hamma o'lcham shu tokenlardan olinadi */
+  --fs-2xs: 11.5px; /* badge, jadval sarlavhasi, uppercase yorliqlar */
+  --fs-xs: 12.5px;  /* label, hint, ikkinchi darajali meta */
+  --fs-sm: 13.5px;  /* jadval matni, izohlar */
+  --fs-base: 14.5px;/* asosiy matn, input, tugma */
+  --fs-md: 16px;    /* karta sarlavhalari (h4) */
+  --fs-lg: 17px;    /* bo'lim sarlavhalari (h3) */
+  --fs-xl: clamp(20px, 4.5vw, 24px);  /* sahifa salomlashuvi (h2) */
+  --fs-2xl: clamp(21px, 5.5vw, 23px); /* auth sarlavha (h1) */
 }
 
 * {
@@ -32,9 +42,12 @@
 
 body {
   font-family: var(--font-body);
+  font-size: var(--fs-base);
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-text-size-adjust: 100%;
 }
 
 h1, h2, h3, h4 {
@@ -69,7 +82,7 @@ a {
   border-radius: 12px;
   padding: 12px 20px;
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--fs-base);
   transition: 0.18s;
   color: #fff;
   background: var(--indigo);
@@ -83,14 +96,14 @@ a {
 .btn.secondary:hover { background: var(--line); }
 .btn.danger { background: var(--red); }
 .btn.danger:hover { background: #dc2626; }
-.btn.sm { padding: 8px 14px; font-size: 12.5px; border-radius: 10px; }
+.btn.sm { padding: 8px 14px; font-size: var(--fs-sm); border-radius: 10px; }
 
 .input {
   width: 100%;
   border: 1.5px solid var(--line);
   border-radius: 12px;
   padding: 12px 14px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   outline: none;
   transition: 0.18s;
   background: var(--surface);
@@ -103,7 +116,7 @@ a {
 .field { margin-bottom: 14px; }
 .field label {
   display: block;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--ink-soft);
   margin-bottom: 6px;
@@ -114,15 +127,24 @@ a {
   color: #dc2626;
   border-radius: 11px;
   padding: 11px 13px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   margin-bottom: 12px;
+}
+
+.success-box {
+  background: var(--green-bg);
+  color: var(--green-d);
+  border-radius: 11px;
+  padding: 11px 13px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 3px 9px;
   border-radius: 20px;
@@ -137,11 +159,11 @@ a {
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
 }
 .table th {
   text-align: left;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
@@ -154,6 +176,12 @@ a {
   border-bottom: 1px solid var(--line);
 }
 .table tr:last-child td { border-bottom: none; }
+
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap .table { min-width: 620px; }
 
 /* ─── Layout ─── */
 .app-header {
@@ -187,9 +215,9 @@ a {
   font-size: 14px;
 }
 .app-main {
-  max-width: 960px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 24px 16px 60px;
+  padding: 24px 20px 60px;
 }
 
 .page-head {
@@ -214,9 +242,245 @@ a {
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 
+/* ─── Dashboard komponentlari ─── */
+.hello h2 { font-size: var(--fs-xl); }
+.hello .sub { color: var(--muted); font-size: var(--fs-sm); margin-top: 3px; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+@media (max-width: 860px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.stat-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.stat-icon.indigo { background: var(--indigo-bg); }
+.stat-icon.green { background: var(--green-bg); }
+.stat-icon.amber { background: #fff7ee; }
+.stat-icon.red { background: #fef2f2; }
+.stat-card .num {
+  font-family: var(--font-head);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1.1;
+}
+.stat-card .lbl { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+
+.live-banner {
+  background: linear-gradient(120deg, var(--indigo), var(--indigo-d));
+  color: #fff;
+  border-radius: var(--r-lg);
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  box-shadow: 0 10px 26px rgba(91, 91, 240, 0.32);
+}
+.live-banner .pulse {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ff6b6b;
+  box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+  animation: pulse 1.6s infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.6); }
+  70% { box-shadow: 0 0 0 9px rgba(255, 107, 107, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0); }
+}
+.live-banner .title { font-family: var(--font-head); font-weight: 700; font-size: var(--fs-md); }
+.live-banner .meta { font-size: var(--fs-sm); opacity: 0.85; }
+.live-banner .btn {
+  background: #fff;
+  color: var(--indigo-d);
+}
+.live-banner .btn:hover { background: var(--indigo-bg); }
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.section-head h3 { font-size: var(--fs-lg); }
+.section-head .count {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+}
+
+.course-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.course-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: 0.18s;
+}
+.course-card:hover { box-shadow: var(--shadow); border-color: var(--line2); }
+.course-card.clickable { cursor: pointer; user-select: none; }
+.course-card.active {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(91, 91, 240, 0.14);
+}
+.course-card .subject {
+  align-self: flex-start;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--indigo);
+  background: var(--indigo-bg);
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+.course-card h4 { font-size: var(--fs-md); }
+.course-card .meta {
+  display: flex;
+  gap: 14px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.course-card .next {
+  border-top: 1px dashed var(--line);
+  padding-top: 9px;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+.course-card .next b { font-weight: 700; }
+
+.roster {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+}
+.roster-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+.roster-line .name { flex: 1; font-weight: 600; }
+.roster-x {
+  border: none;
+  background: #fef2f2;
+  color: var(--red);
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+}
+.roster-x:hover { background: var(--red); color: #fff; }
+.roster-add { display: flex; gap: 8px; margin-top: 4px; }
+.roster-add .input { padding: 8px 10px; font-size: var(--fs-sm); }
+.roster-add .btn { flex-shrink: 0; }
+
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  transition: 0.18s;
+}
+.chip:hover { border-color: var(--line2); color: var(--ink-soft); }
+.chip.active {
+  background: var(--indigo);
+  border-color: var(--indigo);
+  color: #fff;
+}
+.chip .n { opacity: 0.75; font-weight: 600; margin-left: 4px; }
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+.dot.green { background: var(--green); }
+.dot.indigo { background: var(--indigo); }
+.dot.red { background: var(--red); }
+.dot.amber { background: var(--amber); }
+
+.empty-state {
+  text-align: center;
+  padding: 34px 16px;
+  color: var(--muted);
+}
+.empty-state .ico { font-size: 34px; margin-bottom: 8px; }
+.empty-state p { font-size: var(--fs-sm); }
+.empty-state .hint { font-size: var(--fs-xs); margin-top: 3px; opacity: 0.8; }
+
+.form-pop {
+  border: 1.5px solid var(--indigo-bg);
+  box-shadow: var(--shadow);
+}
+.form-pop h3 { margin-bottom: 12px; font-size: var(--fs-md); }
+
+.table .when { white-space: nowrap; }
+.table .when .rel { font-weight: 700; color: var(--ink-soft); }
+.table .when .abs { font-size: var(--fs-xs); color: var(--muted); }
+
+.journal-row td { background: var(--bg); border-radius: 10px; }
+.journal-title {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.journal-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0;
+  font-size: var(--fs-sm);
+  border-bottom: 1px dashed var(--line2);
+}
+.journal-line:last-child { border-bottom: none; }
+.journal-line .name { font-weight: 600; flex: 1; }
+.journal-line .mins { font-weight: 700; color: var(--indigo); }
+
 /* ─── Auth sahifalari ─── */
 .auth-wrap {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -243,25 +507,124 @@ a {
 }
 .auth-card h1 {
   text-align: center;
-  font-size: 22px;
+  font-size: var(--fs-2xl);
   margin-bottom: 4px;
 }
 .auth-sub {
   text-align: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   margin-bottom: 22px;
 }
 .auth-foot {
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   margin-top: 16px;
 }
 
+/* ─── Bo'lim navigatsiyasi ─── */
+.section-nav {
+  position: sticky;
+  top: 66px;
+  z-index: 40;
+  display: flex;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 5px;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.section-nav button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  padding: 9px 14px;
+  border-radius: 10px;
+  transition: 0.18s;
+  white-space: nowrap;
+}
+.section-nav button:hover { color: var(--ink-soft); background: var(--bg); }
+.section-nav button.active { background: var(--indigo); color: #fff; }
+.section-nav button .n {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+}
+
+/* ─── Ixcham dars ro'yxati (Asosiy bo'lim) ─── */
+.lesson-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--line);
+  flex-wrap: wrap;
+}
+.lesson-line:last-child { border-bottom: none; }
+.lesson-line .info { flex: 1; min-width: 150px; }
+.lesson-line .info .name { font-weight: 700; font-size: var(--fs-base); }
+.lesson-line .info .meta { color: var(--muted); font-size: var(--fs-xs); margin-top: 2px; }
+
 /* ─── Dars xonasi ─── */
 .room-wrap {
   height: calc(100vh - 60px);
+  height: calc(100dvh - 60px);
   background: #0f1022;
 }
 .room-wrap .lk-video-conference { height: 100%; }
+
+/* ─── Mobil moslashuv ─── */
+@media (max-width: 640px) {
+  :root {
+    /* Telefonda mayda shriftlar o'qish uchun bir poghona kattaroq */
+    --fs-2xs: 12px;
+    --fs-xs: 13px;
+    --fs-sm: 14px;
+    --fs-base: 15px;
+  }
+
+  .app-header { padding: 0 14px; gap: 10px; }
+  .app-main { padding: 16px 12px 48px; }
+  .card { padding: 16px; }
+
+  .page-head { flex-direction: column; align-items: stretch; }
+  .page-head .row .btn { flex: 1; }
+
+  .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat-card { padding: 12px 14px; gap: 10px; }
+  .stat-icon { width: 36px; height: 36px; font-size: 17px; border-radius: 11px; }
+  .stat-card .num { font-size: 19px; }
+
+  .live-banner { padding: 16px; }
+  .live-banner .btn { width: 100%; }
+
+  .course-grid { grid-template-columns: 1fr; }
+
+  /* 16px dan kichik shrift iOS Safari'da fokusda avtomatik zoom qiladi */
+  .input { font-size: 16px; }
+
+  .journal-line { flex-wrap: wrap; gap: 6px 10px; }
+  .auth-card { padding: 24px 20px; }
+}
+
+@media (max-width: 400px) {
+  .app-header .user-name { display: none; }
+  .logo { font-size: 17px; }
+}

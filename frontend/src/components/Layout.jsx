@@ -22,7 +22,7 @@ export default function Layout() {
         </Link>
         <div className="spacer" />
         <span className="badge indigo">{ROLE_LABELS[user.role] || user.role}</span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>
+        <span className="user-name" style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>
           {user.first_name || user.username}
         </span>
         <button
