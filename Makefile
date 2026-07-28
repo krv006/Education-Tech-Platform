@@ -23,7 +23,7 @@ ps:  ## Servislar holati
 	$(COMPOSE) ps
 
 fake:  ## Fake data: teacher / perents / student (parol: 1)
-	$(COMPOSE) exec backend python manage.py seed_fake
+	$(COMPOSE) exec backend sh -c "python manage.py migrate --noinput && python manage.py seed_fake"
 
 superuser:  ## Django admin superuser yaratish
 	$(COMPOSE) exec backend python manage.py createsuperuser
