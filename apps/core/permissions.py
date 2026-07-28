@@ -32,6 +32,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'lesson.schedule', 'lesson.edit', 'lesson.cancel', 'lesson.finish', 'lesson.view',
         'room.token', 'room.moderate',
         'attendance.view',
+        'chat.use',
     },
     STUDENT: {
         'course.view', 'course.enroll',
@@ -39,6 +40,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'room.token', 'room.leave',
         'link.respond',
         'attendance.view',
+        'chat.use',
     },
     PARENT: {
         'child.create',

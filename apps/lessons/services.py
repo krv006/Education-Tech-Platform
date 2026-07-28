@@ -13,6 +13,9 @@ from .models import Attendance, Course, Enrollment, Lesson
 @transaction.atomic
 def create_course(*, teacher: User, request=None, **data) -> Course:
     course = Course.objects.create(teacher=teacher, **data)
+    # Har kurs = bitta guruh chat (EduTech.docx) — kurs bilan birga ochiladi
+    from apps.chat import services as chat_services
+    chat_services.ensure_course_room(course)
     audit.record(action='course.create', actor=teacher, target=course, request=request)
     return course
 
