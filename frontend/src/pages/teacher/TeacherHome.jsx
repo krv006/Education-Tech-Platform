@@ -283,7 +283,7 @@ export default function TeacherHome() {
                 .map((l) => {
                   const meta = LESSON_STATUS[l.status] || { label: l.status, badge: 'indigo', dot: 'indigo' }
                   return (
-                    <div className="lesson-line" key={l.id}>
+                    <div className="lesson-line today-row" key={l.id}>
                       <div className="info">
                         <div className="name">{l.title}</div>
                         <div className="meta">{l.course_title} · {fmtWhen(l.starts_at).rel} · {l.duration_min} daq</div>
