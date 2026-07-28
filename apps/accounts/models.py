@@ -3,7 +3,16 @@ import string
 import uuid
 
 from django.contrib.auth.models import AbstractUser
-from django.db import models
+from django.db.models import (
+    CASCADE,
+    BooleanField,
+    CharField,
+    DateTimeField,
+    ForeignKey,
+    TextChoices,
+    UniqueConstraint,
+    UUIDField,
+)
 
 from apps.core.models import TimeStampedUUIDModel
 
@@ -14,20 +23,20 @@ def generate_invite_code() -> str:
 
 
 class User(AbstractUser):
-    class Role(models.TextChoices):
+    class Role(TextChoices):
         SUPER_ADMIN = 'super_admin', 'Super Admin'
         ADMIN = 'admin', 'Admin'
         TEACHER = 'teacher', "O'qituvchi"
         STUDENT = 'student', "O'quvchi"
         PARENT = 'parent', 'Ota-ona'
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    role = models.CharField(max_length=16, choices=Role.choices, default=Role.STUDENT, db_index=True)
-    phone = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    id = UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    role = CharField(max_length=16, choices=Role.choices, default=Role.STUDENT, db_index=True)
+    phone = CharField(max_length=20, unique=True, null=True, blank=True)
     # Student's invite code — parent enters it to request a link (consent flow).
-    invite_code = models.CharField(max_length=12, unique=True, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    invite_code = CharField(max_length=12, unique=True, null=True, blank=True)
+    created_at = DateTimeField(auto_now_add=True)
+    updated_at = DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
         if self.role == self.Role.STUDENT and not self.invite_code:
@@ -50,20 +59,20 @@ class ParentChildLink(TimeStampedUUIDModel):
     The student can revoke (decline) an approved link at any time.
     """
 
-    class Status(models.TextChoices):
+    class Status(TextChoices):
         PENDING = 'pending', 'Kutilmoqda'
         APPROVED = 'approved', 'Tasdiqlangan'
         DECLINED = 'declined', 'Rad etilgan'
 
-    parent = models.ForeignKey(User, on_delete=models.CASCADE, related_name='child_links')
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='parent_links')
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
-    responded_at = models.DateTimeField(null=True, blank=True)
+    parent = ForeignKey('accounts.User', CASCADE, related_name='child_links')
+    student = ForeignKey('accounts.User', CASCADE, related_name='parent_links')
+    status = CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
+    responded_at = DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']
         constraints = [
-            models.UniqueConstraint(fields=['parent', 'student'], name='unique_parent_student'),
+            UniqueConstraint(fields=['parent', 'student'], name='unique_parent_student'),
         ]
 
     def __str__(self):
@@ -73,19 +82,19 @@ class ParentChildLink(TimeStampedUUIDModel):
 class Consent(TimeStampedUUIDModel):
     """Per-child consent flags managed by the linked parent (FRD: privacy.consent_collect)."""
 
-    class Kind(models.TextChoices):
+    class Kind(TextChoices):
         RECORDING = 'recording', 'Dars yozib olish'
         CAMERA = 'camera', 'Kamera'
         ANALYTICS = 'analytics', 'Tahlil (davomat/faollik)'
 
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='consents')
-    granted_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='granted_consents')
-    kind = models.CharField(max_length=16, choices=Kind.choices)
-    granted = models.BooleanField(default=False)
+    student = ForeignKey('accounts.User', CASCADE, related_name='consents')
+    granted_by = ForeignKey('accounts.User', CASCADE, related_name='granted_consents')
+    kind = CharField(max_length=16, choices=Kind.choices)
+    granted = BooleanField(default=False)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['student', 'kind'], name='unique_student_consent_kind'),
+            UniqueConstraint(fields=['student', 'kind'], name='unique_student_consent_kind'),
         ]
 
     def __str__(self):
