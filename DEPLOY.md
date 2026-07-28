@@ -1,0 +1,52 @@
+# Deploy — edu.thesofmebel.uz
+
+Bitta `docker compose` bilan hammasi ko'tariladi: Postgres, Redis, LiveKit, Django (gunicorn), Caddy (TLS + frontend + reverse proxy).
+
+## Arxitektura
+
+```
+Internet ──443──> Caddy (TLS avto, Let's Encrypt)
+                   ├── /            -> React SPA (build qilingan static)
+                   ├── /api, /admin -> backend:8000 (gunicorn)
+                   ├── /static      -> backend (whitenoise)
+                   ├── /media       -> umumiy volume (file_server)
+                   └── /livekit     -> livekit:7880 (WebSocket signaling)
+Internet ──7881/tcp, 50000-50100/udp──> LiveKit (WebRTC media, to'g'ridan-to'g'ri)
+```
+
+## 1. DNS
+
+`edu.thesofmebel.uz` uchun **A record** -> server IP. (Caddy sertifikat olishi uchun DNS avval ishlashi shart.)
+
+## 2. Server portlari (firewall/UFW da oching)
+
+- `80/tcp`, `443/tcp`, `443/udp` — Caddy
+- `7881/tcp` — LiveKit TCP fallback
+- `50000-50100/udp` — LiveKit WebRTC media
+
+## 3. Ishga tushirish
+
+```bash
+git clone <repo> && cd EdTech
+cp .env.prod.example .env
+# .env ni to'ldiring: SECRET_KEY, POSTGRES_PASSWORD, LIVEKIT_API_SECRET
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
+```
+
+Tekshirish: `https://edu.thesofmebel.uz` (SPA), `/admin/` (Django admin), `/api/v1/docs/` bo'lsa API docs.
+
+## 4. Yangilash
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Migratsiya va collectstatic har startda avtomatik bajariladi.
+
+## Muammolar
+
+- **Sertifikat olinmayapti** — DNS hali tarqalmagan yoki 80-port yopiq. `docker compose -f docker-compose.prod.yml logs caddy`
+- **Video/audio ulanmayapti (signaling ishlaydi, media yo'q)** — UDP portlar yopiq, yoki LiveKit tashqi IP ni topolmayapti. `docker-compose.prod.yml` da livekit `command` ga qo'shing: `--node-ip <SERVER_PUBLIC_IP>`
+- **502 /api da** — backend hali ko'tarilmagan: `docker compose -f docker-compose.prod.yml logs backend`
