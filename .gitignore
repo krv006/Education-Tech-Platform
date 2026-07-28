@@ -278,3 +278,7 @@ cython_debug/
 # loyiha skriptlari kerak
 !scripts/
 !scripts/**
+
+# Django collectstatic natijasi
+/staticfiles/
+/media/
