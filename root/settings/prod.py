@@ -9,6 +9,22 @@ if os.getenv('SECRET_KEY', '').startswith('django-insecure') or not os.getenv('S
     raise RuntimeError('PROD: haqiqiy SECRET_KEY .env da berilishi shart.')
 if not os.getenv('POSTGRES_DB'):
     raise RuntimeError('PROD: Postgres majburiy (POSTGRES_DB va h.k.).')
+if '*' in ALLOWED_HOSTS:  # noqa: F405
+    raise RuntimeError('PROD: ALLOWED_HOSTS aniq domen bo\'lishi shart (masalan edu.thesofmebel.uz).')
+
+# Static — whitenoise (gunicorn orqali beriladi, Caddy /static ni backendga proxy qiladi)
+MIDDLEWARE.insert(  # noqa: F405
+    MIDDLEWARE.index('django.middleware.security.SecurityMiddleware') + 1,  # noqa: F405
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+)
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
+
+CSRF_TRUSTED_ORIGINS = os.getenv(
+    'CSRF_TRUSTED_ORIGINS', 'https://edu.thesofmebel.uz'
+).split(',')
 
 DATABASES = {
     'default': {
