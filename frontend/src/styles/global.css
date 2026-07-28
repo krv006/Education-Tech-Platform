@@ -810,8 +810,18 @@ a {
   background: transparent;
   padding: 0;
 }
-/* Ism token'dan olinadi — input keraksiz */
-.room-lobby .lk-username-container { display: none; }
+/* Ism token'dan olinadi — faqat input yashiriladi (Join tugmasi shu konteynerda!) */
+.room-lobby .lk-username-container input { display: none; }
+.room-lobby .lk-username-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.room-lobby .lk-prejoin .lk-join-button {
+  width: min(320px, 100%);
+  padding: 12px 20px;
+  font-size: 15px;
+}
 .room-lobby .lk-prejoin .lk-video-container {
   border-radius: 16px;
   overflow: hidden;
