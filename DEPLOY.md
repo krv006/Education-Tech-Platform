@@ -24,15 +24,22 @@ Internet ──7881/tcp, 50000-50100/udp──> LiveKit (WebRTC media, to'g'rida
 - `7881/tcp` — LiveKit TCP fallback
 - `50000-50100/udp` — LiveKit WebRTC media
 
-## 3. Ishga tushirish
+## 3. Ishga tushirish — bitta buyruq
 
 ```bash
-git clone <repo> && cd EdTech
-cp .env.prod.example .env
-# .env ni to'ldiring: SECRET_KEY, POSTGRES_PASSWORD, LIVEKIT_API_SECRET
-docker compose -f docker-compose.prod.yml up -d --build
+bash scripts/deploy.sh
+```
+
+Skript o'zi: host'dagi nginx/apache'ni to'xtatadi (80/443 Caddy'ga o'tadi), `.env` yo'q
+bo'lsa sekretlarni generatsiya qilib yaratadi, ufw portlarini ochadi, `docker compose up -d --build` qiladi.
+
+Keyin admin yaratish:
+
+```bash
 docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
 ```
+
+Qo'lda qilmoqchi bo'lsangiz: `cp .env.prod.example .env` -> to'ldiring -> `docker compose -f docker-compose.prod.yml up -d --build`.
 
 Tekshirish: `https://edu.thesofmebel.uz` (SPA), `/admin/` (Django admin), `/api/v1/docs/` bo'lsa API docs.
 
