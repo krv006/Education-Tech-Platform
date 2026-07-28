@@ -1,0 +1,30 @@
+# Caddy — TLS (Let's Encrypt avtomatik) + reverse proxy + SPA static.
+# DOMAIN env orqali o'zgartirish mumkin (docker-compose.prod.yml).
+{$DOMAIN:edu.thesofmebel.uz} {
+	encode zstd gzip
+
+	# Django — API, admin, static (whitenoise orqali backend beradi)
+	@backend path /api/* /admin/* /static/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	# LiveKit signaling (WebSocket). Client: wss://<domain>/livekit
+	# handle_path prefiksni kesib tashlaydi: /livekit/rtc -> /rtc
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
+
+	# Media fayllar (upload) — backend bilan umumiy volume
+	handle /media/* {
+		root * /srv
+		file_server
+	}
+
+	# React SPA — qolgan hamma yo'llar index.html ga (client-side routing)
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+}
