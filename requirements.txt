@@ -9,3 +9,4 @@ psycopg[binary]>=3.3
 livekit-api>=1.2
 gunicorn>=23.0
 whitenoise>=6.8
+redis>=5.0
