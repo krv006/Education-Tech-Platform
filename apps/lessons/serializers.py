@@ -55,7 +55,25 @@ class AttendanceSerializer(serializers.ModelSerializer):
     student = UserSerializer(read_only=True)
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     minutes = serializers.IntegerField(read_only=True)
+    attention_total = serializers.SerializerMethodField()
+    attention_answered = serializers.SerializerMethodField()
+    focus_exits = serializers.SerializerMethodField()
 
     class Meta:
         model = Attendance
-        fields = ['id', 'lesson', 'lesson_title', 'student', 'joined_at', 'left_at', 'minutes']
+        fields = [
+            'id', 'lesson', 'lesson_title', 'student', 'joined_at', 'left_at', 'minutes',
+            'attention_total', 'attention_answered', 'focus_exits',
+        ]
+
+    def get_attention_total(self, obj) -> int:
+        return obj.lesson.attention_checks.filter(student=obj.student).count()
+
+    def get_attention_answered(self, obj) -> int:
+        return obj.lesson.attention_checks.filter(
+            student=obj.student, answered_at__isnull=False,
+        ).count()
+
+    def get_focus_exits(self, obj) -> int:
+        """O'quvchi dars davomida necha marta oynadan chiqib ketgani (anti-cheat)."""
+        return obj.lesson.focus_events.filter(student=obj.student, kind='exit').count()

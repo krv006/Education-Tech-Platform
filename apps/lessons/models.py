@@ -78,6 +78,49 @@ class Lesson(TimeStampedUUIDModel, SoftDeleteModel):
         return f'{self.title} ({self.starts_at:%Y-%m-%d %H:%M})'
 
 
+class AttentionCheck(TimeStampedUUIDModel):
+    """"Siz shu yerdamisiz?" — dars davomida server belgilagan tasodifiy vaqtlarda.
+
+    Jadval server tomonda yaratiladi (EduTech.docx: o'quvchi vaqtini oldindan
+    bila olmasligi kerak). 15 soniya ichida javob bo'lmasa o'tkazib yuborilgan
+    hisoblanadi.
+    """
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='attention_checks')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='attention_checks')
+    due_at = DateTimeField(db_index=True)
+    answered_at = DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['due_at']
+
+    def __str__(self):
+        state = 'javob berildi' if self.answered_at else 'kutilmoqda'
+        return f'{self.student.username} @ {self.due_at:%H:%M:%S} [{state}]'
+
+
+class FocusEvent(TimeStampedUUIDModel):
+    """Anti-cheat jurnali: o'quvchi dars oynasidan chiqib-kirishlari.
+
+    Brauzer screenshot/screenrecord'ni taqiqlay olmaydi — lekin har bir
+    chiqib-kirish shu yerga yoziladi va hisobotda ko'rinadi.
+    """
+
+    class Kind(TextChoices):
+        EXIT = 'exit', 'Oynadan chiqdi'
+        RETURN = 'return', 'Qaytib keldi'
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='focus_events')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='focus_events')
+    kind = CharField(max_length=8, choices=Kind.choices)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.student.username} · {self.kind} · {self.created_at:%H:%M:%S}'
+
+
 class Attendance(TimeStampedUUIDModel):
     """Auto attendance: stamped when a participant requests a room token / leaves."""
 
