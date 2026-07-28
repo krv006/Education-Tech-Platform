@@ -272,9 +272,8 @@ cython_debug/
 #.idea/
 
 
-# Django migrations — git'ga qo'shilmaydi (har muhitda makemigrations qilinadi)
-**/migrations/*.py
-!**/migrations/__init__.py
+# Django migrations git'da SAQLANADI — prod'da migrate aynan shu fayllar bilan
+# ishlaydi; har muhitda alohida makemigrations qilish bazalarni nomuvofiq qiladi.
 
 # loyiha skriptlari kerak
 !scripts/
