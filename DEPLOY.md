@@ -39,6 +39,9 @@ Keyin admin yaratish:
 docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
 ```
 
+Qulaylik uchun `Makefile` bor (`make help` — ro'yxat): `make deploy`, `make fake` (fake data:
+teacher / perents / student, parol: 1), `make logs`, `make superuser` va h.k.
+
 Qo'lda qilmoqchi bo'lsangiz: `cp .env.prod.example .env` -> to'ldiring -> `docker compose -f docker-compose.prod.yml up -d --build`.
 
 Tekshirish: `https://edu.thesofmebel.uz` (SPA), `/admin/` (Django admin), `/api/v1/docs/` bo'lsa API docs.
