@@ -39,7 +39,7 @@ export default function LessonRoom() {
   if (!conn) return <p className="muted">Xonaga ulanilmoqda…</p>
 
   return (
-    <div className="room-wrap" style={{ margin: '-24px -16px -60px', borderRadius: 0 }}>
+    <div className="room-wrap">
       <LiveKitRoom
         serverUrl={conn.url}
         token={conn.token}

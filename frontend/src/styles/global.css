@@ -582,13 +582,19 @@ a {
 .lesson-line .info .name { font-weight: 700; font-size: var(--fs-base); }
 .lesson-line .info .meta { color: var(--muted); font-size: var(--fs-xs); margin-top: 2px; }
 
-/* ─── Dars xonasi ─── */
+/* ─── Dars xonasi — Meet uslubida to'liq ekran ─── */
 .room-wrap {
-  height: calc(100vh - 60px);
-  height: calc(100dvh - 60px);
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   background: #0f1022;
 }
 .room-wrap .lk-video-conference { height: 100%; }
+/* Fokus rejimi (screen share): asosiy oyna maksimal katta, thumbnail'lar tor ustun */
+.room-wrap .lk-focus-layout { grid-template-columns: 220px minmax(0, 1fr); }
+.room-wrap .lk-carousel .lk-participant-tile { max-height: 140px; }
+/* Chat — tor yon panel (default 55ch ekranning yarmini olar edi) */
+.room-wrap .lk-chat { width: min(340px, 100vw); flex-shrink: 0; }
 
 /* ─── Mobil moslashuv ─── */
 @media (max-width: 640px) {
@@ -622,6 +628,13 @@ a {
 
   .journal-line { flex-wrap: wrap; gap: 6px 10px; }
   .auth-card { padding: 24px 20px; }
+
+  /* Dars xonasi: telefonda fokus tepada katta, thumbnail'lar pastda qator */
+  .room-wrap .lk-focus-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) 96px;
+  }
+  .room-wrap .lk-carousel .lk-participant-tile { max-height: 96px; }
 }
 
 @media (max-width: 400px) {
