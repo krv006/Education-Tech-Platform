@@ -12,13 +12,16 @@ Hisoblar (parol hammasiga: 1):
 
 Qayta ishga tushirsa eski fake ma'lumotni o'chirib, yangidan yaratadi (idempotent).
 """
+import random
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.accounts.models import Consent, ParentChildLink, User
-from apps.lessons.models import Attendance, Course, Enrollment, Lesson
+from apps.chat import services as chat_services
+from apps.chat.models import ChatRoom, Message
+from apps.lessons.models import Attendance, AttentionCheck, Course, Enrollment, FocusEvent, Lesson
 
 PASSWORD = '1'
 USERNAMES = [
@@ -100,6 +103,20 @@ class Command(BaseCommand):
                 joined = starts + timedelta(minutes=2 + j)
                 left = starts + timedelta(minutes=40 + (j % 5))
                 Attendance.objects.create(lesson=lesson, student=s, joined_at=joined, left_at=left)
+                # Diqqat tekshiruvi tarixi: Sardor hammasiga javob bergan,
+                # Jasur yarmini o'tkazib yuborgan — hisobotda farq ko'rinsin
+                for k in range(random.randint(3, 5)):
+                    due = joined + timedelta(minutes=5 + k * 8)
+                    missed = s.username == 'jasur' and k % 2 == 0
+                    AttentionCheck.objects.create(
+                        lesson=lesson, student=s, due_at=due,
+                        answered_at=None if missed else due + timedelta(seconds=random.randint(2, 12)),
+                    )
+            # Jasur dars oynasidan chiqib-kirib yurgan (anti-cheat jurnali)
+            jasur = next(s for s in all_students if s.username == 'jasur')
+            for k in range(3):
+                FocusEvent.objects.create(lesson=lesson, student=jasur, kind=FocusEvent.Kind.EXIT)
+                FocusEvent.objects.create(lesson=lesson, student=jasur, kind=FocusEvent.Kind.RETURN)
 
         # ── hozir jonli dars ──
         live = Lesson.objects.create(
@@ -154,6 +171,39 @@ class Command(BaseCommand):
                 starts_at=now + timedelta(days=days, hours=3), duration_min=45,
             )
 
+        # ── chat: guruhlar + direct (Telegram uslubi) ──
+        for course in (algebra, english, informatika):
+            chat_services.ensure_course_room(course)
+        algebra_room = algebra.chat_room
+        for sender, text in [
+            (teacher, "Assalomu alaykum! Ertaga nazorat ishi bo'ladi, tayyorlaning 📚"),
+            (student, 'Vaalaykum assalom, qaysi mavzulardan?'),
+            (teacher, "Kvadrat tenglamalar va Vieta teoremasi. Doska PDF'larini ko'rib chiqing."),
+            (others[0], 'Rahmat, tushunarli!'),
+        ]:
+            Message.objects.create(room=algebra_room, sender=sender, text=text)
+        info_room = informatika.chat_room
+        for sender, text in [
+            (data_teacher, "Salom! Keyingi darsda if/else mavzusini o'tamiz 🐍"),
+            (data_students[0], 'Zo\'r, kutamiz!'),
+        ]:
+            Message.objects.create(room=info_room, sender=sender, text=text)
+        # direct: Sardor <-> Malika (ochiq), Nilufar so'rovi kutilmoqda
+        direct = ChatRoom.objects.create(
+            kind=ChatRoom.Kind.DIRECT, teacher=teacher, student=student,
+            direct_status=ChatRoom.DirectStatus.ACTIVE,
+        )
+        for sender, text in [
+            (student, "Ustoz, uy vazifasining 3-misolini tushunmadim."),
+            (teacher, "Ertaga darsdan keyin 10 daqiqa qolsang, birga ko'ramiz."),
+            (student, 'Xo\'p, rahmat!'),
+        ]:
+            Message.objects.create(room=direct, sender=sender, text=text)
+        ChatRoom.objects.create(
+            kind=ChatRoom.Kind.DIRECT, teacher=teacher, student=others[0],
+            direct_status=ChatRoom.DirectStatus.PENDING,
+        )
+
         self.stdout.write(self.style.SUCCESS(
             'Fake ma\'lumot tayyor (parol hammasiga: 1):\n'
             '  teacher  — O\'qituvchi (Malika Karimova)\n'
@@ -163,5 +213,7 @@ class Command(BaseCommand):
             '  nilufar / dilnoza / madina / jasur — qo\'shimcha o\'quvchilar\n'
             '  Xusinboy / Kamron / Jaloliddin / Yokub — data o\'qituvchining o\'quvchilari\n'
             f'Kurslar: {Course.objects.count()} · Darslar: {Lesson.objects.count()} · '
-            f'Davomat yozuvlari: {Attendance.objects.count()}'
+            f'Davomat: {Attendance.objects.count()} · '
+            f'Chat xonalari: {ChatRoom.objects.count()} · Xabarlar: {Message.objects.count()} · '
+            f'Diqqat tekshiruvlari: {AttentionCheck.objects.count()}'
         ))
