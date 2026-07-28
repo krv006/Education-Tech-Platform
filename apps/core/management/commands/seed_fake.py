@@ -4,9 +4,11 @@
 
 Hisoblar (parol hammasiga: 1):
   teacher  — O'qituvchi (Malika Karimova)
+  data     — O'qituvchi (Informatika · Python kursi)
   perents  — Ota-ona (Aziz Aliyev)
   student  — O'quvchi (Sardor, perents'ga bog'langan)
-  + qo'shimcha o'quvchilar: nilufar, dilnoza, madina, jasur (parol: 1)
+  + qo'shimcha o'quvchilar: nilufar, dilnoza, madina, jasur
+  + data o'qituvchining o'quvchilari: Xusinboy, Kamron, Jaloliddin, Yokub
 
 Qayta ishga tushirsa eski fake ma'lumotni o'chirib, yangidan yaratadi (idempotent).
 """
@@ -19,7 +21,10 @@ from apps.accounts.models import Consent, ParentChildLink, User
 from apps.lessons.models import Attendance, Course, Enrollment, Lesson
 
 PASSWORD = '1'
-USERNAMES = ['teacher', 'perents', 'student', 'nilufar', 'dilnoza', 'madina', 'jasur']
+USERNAMES = [
+    'teacher', 'perents', 'student', 'nilufar', 'dilnoza', 'madina', 'jasur',
+    'data', 'Xusinboy', 'Kamron', 'Jaloliddin', 'Yokub',
+]
 
 
 def make_user(username, role, first_name='', last_name='', phone=None):
@@ -105,6 +110,39 @@ class Command(BaseCommand):
             lesson=live, student=student, joined_at=now - timedelta(minutes=12),
         )
 
+        # ── ikkinchi o'qituvchi: data — o'z kursi va o'quvchilari bilan ──
+        data_teacher = make_user('data', User.Role.TEACHER, 'Data', "O'qituvchi")
+        data_students = [
+            make_user('Xusinboy', User.Role.STUDENT, 'Xusinboy', ''),
+            make_user('Kamron', User.Role.STUDENT, 'Kamron', ''),
+            make_user('Jaloliddin', User.Role.STUDENT, 'Jaloliddin', ''),
+            make_user('Yokub', User.Role.STUDENT, 'Yokub', ''),
+        ]
+        informatika = Course.objects.create(
+            teacher=data_teacher, title='Informatika · Python', subject='Informatika',
+            description="Python asoslari — o'zgaruvchilar, sikllar, funksiyalar",
+        )
+        for s in data_students:
+            Enrollment.objects.create(course=informatika, student=s)
+
+        # o'tgan darslar (davomat bilan) va kelgusi dars
+        for i, topic in enumerate(['Python — kirish', "O'zgaruvchilar va turlar"]):
+            starts = now - timedelta(days=2 - i, hours=1)
+            lesson = Lesson.objects.create(
+                course=informatika, title=topic, starts_at=starts,
+                duration_min=45, status=Lesson.Status.FINISHED,
+            )
+            for j, s in enumerate(data_students):
+                Attendance.objects.create(
+                    lesson=lesson, student=s,
+                    joined_at=starts + timedelta(minutes=1 + j),
+                    left_at=starts + timedelta(minutes=42),
+                )
+        Lesson.objects.create(
+            course=informatika, title='Shart operatorlari (if/else)',
+            starts_at=now + timedelta(days=1, hours=2), duration_min=45,
+        )
+
         # ── kelgusi darslar ──
         for days, (course, topic) in enumerate([
             (algebra, "Chiziqli tenglamalar tizimi"),
@@ -119,9 +157,11 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             'Fake ma\'lumot tayyor (parol hammasiga: 1):\n'
             '  teacher  — O\'qituvchi (Malika Karimova)\n'
+            '  data     — O\'qituvchi (Informatika · Python kursi)\n'
             '  perents  — Ota-ona (Aziz Aliyev)\n'
             f'  student  — O\'quvchi Sardor (taklif kodi: {student.invite_code})\n'
             '  nilufar / dilnoza / madina / jasur — qo\'shimcha o\'quvchilar\n'
-            f'Kurslar: 2 · Darslar: {Lesson.objects.count()} (5 tugagan, 1 jonli, 3 kelgusi) · '
+            '  Xusinboy / Kamron / Jaloliddin / Yokub — data o\'qituvchining o\'quvchilari\n'
+            f'Kurslar: {Course.objects.count()} · Darslar: {Lesson.objects.count()} · '
             f'Davomat yozuvlari: {Attendance.objects.count()}'
         ))
