@@ -1,9 +1,12 @@
 """Lessons views — yupqa qatlam: HTTP <-> service/selector."""
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.accounts.models import User
+from apps.accounts.serializers import UserSerializer
 from apps.core.permissions import RequirePerm
 
 from . import selectors, services
@@ -90,6 +93,30 @@ class CourseViewSet(viewsets.ModelViewSet):
             request=request,
         )
         return Response(EnrollmentSerializer(enrollment).data)
+
+    @action(detail=True, url_path='search-students')
+    def search_students(self, request, pk=None):
+        """Jonli qidiruv (EduTech.docx: username orqali bazadan search) —
+        o'qituvchi yozgan matnga mos o'quvchilar, kursdagi holati bilan."""
+        course = self.get_object()
+        if course.teacher_id != request.user.id and request.user.role not in ('admin', 'super_admin'):
+            self.permission_denied(request, message="Faqat kurs o'qituvchisi qidiradi.")
+        q = (request.query_params.get('q') or '').strip()
+        if len(q) < 2:
+            return Response([])
+        students = User.objects.filter(role=User.Role.STUDENT).filter(
+            Q(username__icontains=q)
+            | Q(first_name__icontains=q)
+            | Q(last_name__icontains=q)
+            | Q(invite_code__iexact=q)
+        ).order_by('username')[:10]
+        statuses = dict(
+            course.enrollments.filter(student__in=students).values_list('student_id', 'status')
+        )
+        return Response([
+            {**UserSerializer(s).data, 'enroll_status': statuses.get(s.id)}
+            for s in students
+        ])
 
     @action(detail=True)
     def students(self, request, pk=None):

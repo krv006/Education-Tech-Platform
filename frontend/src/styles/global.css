@@ -854,6 +854,40 @@ a {
 }
 .course-tab-body .lesson-line { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .tg-form { display: grid; gap: 8px; }
+/* Jonli o'quvchi qidiruvi (inline takliflar) */
+.student-search { position: relative; }
+.student-search .input { width: 100%; }
+.student-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(20, 22, 60, 0.16);
+  overflow: hidden;
+}
+.student-suggest .none { padding: 12px 14px; color: var(--muted); font-size: 13px; }
+.student-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.student-suggest-row:last-child { border-bottom: none; }
+.student-suggest-row:hover:not(:disabled) { background: var(--indigo-bg); }
+.student-suggest-row:disabled { cursor: default; opacity: 0.75; }
+.student-suggest-row .who { flex: 1; display: grid; line-height: 1.25; font-size: 14px; }
+.student-suggest-row .who .muted { font-size: 12px; }
+.student-suggest-row .add { color: var(--indigo); font-weight: 700; font-size: 13px; }
 .chat-modal-card textarea.input { resize: vertical; }
 
 @media (max-width: 760px) {

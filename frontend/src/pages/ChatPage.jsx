@@ -113,11 +113,13 @@ function LessonsTab({ courseId, isTeacher }) {
   )
 }
 
-/** Kurs chatidagi "O'quvchilar" tabi (faqat o'qituvchi) — a'zolar + kutilayotgan so'rovlar. */
+/** Kurs chatidagi "O'quvchilar" tabi (faqat o'qituvchi) — a'zolar + kutilayotgan
+ * so'rovlar + jonli qidiruv (yozganda username bo'yicha takliflar chiqadi). */
 function StudentsTab({ courseId }) {
   const [students, setStudents] = useState(null)
   const [pending, setPending] = useState([])
-  const [ref, setRef] = useState('')
+  const [query, setQuery] = useState('')
+  const [suggestions, setSuggestions] = useState(null) // null = yopiq
   const [err, setErr] = useState('')
 
   const load = useCallback(async () => {
@@ -134,6 +136,19 @@ function StudentsTab({ courseId }) {
 
   useEffect(() => { load() }, [load])
 
+  // Jonli qidiruv — 300ms debounce bilan (Telegram inline uslubi)
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < 2) { setSuggestions(null); return undefined }
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/courses/${courseId}/search-students/`, { params: { q } })
+        setSuggestions(data)
+      } catch { setSuggestions([]) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [query, courseId])
+
   async function respond(enrollmentId, action) {
     try {
       await api.post('/courses/requests/respond/', { enrollment_id: enrollmentId, action })
@@ -141,11 +156,11 @@ function StudentsTab({ courseId }) {
     } catch (e) { setErr(errMessage(e)) }
   }
 
-  async function addStudent(e) {
-    e.preventDefault()
+  async function addStudent(s) {
     try {
-      await api.post(`/courses/${courseId}/enroll/`, { student: ref.trim() })
-      setRef('')
+      await api.post(`/courses/${courseId}/enroll/`, { student_id: s.id })
+      setQuery('')
+      setSuggestions(null)
       load()
     } catch (e2) { setErr(errMessage(e2)) }
   }
@@ -153,11 +168,38 @@ function StudentsTab({ courseId }) {
   return (
     <div className="course-tab-body">
       {err && <div className="error-box">{err}</div>}
-      <form className="row" onSubmit={addStudent}>
-        <input className="input" placeholder="Login yoki taklif kodi (FK-XXXX)" value={ref}
-          onChange={(e) => setRef(e.target.value)} />
-        <button className="btn sm" type="submit" disabled={!ref.trim()}>+ Qo'shish</button>
-      </form>
+      <div className="student-search">
+        <input
+          className="input"
+          placeholder="🔍 O'quvchi qidirish — login, ism yoki taklif kodi…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {suggestions !== null && (
+          <div className="student-suggest">
+            {suggestions.length === 0 && <div className="none">Hech kim topilmadi</div>}
+            {suggestions.map((s) => (
+              <button
+                key={s.id}
+                className="student-suggest-row"
+                disabled={s.enroll_status === 'approved'}
+                onClick={() => addStudent(s)}
+              >
+                <Avatar name={s.first_name || s.username} size={32} />
+                <span className="who">
+                  <b>{s.first_name || s.username} {s.last_name}</b>
+                  <span className="muted">@{s.username}</span>
+                </span>
+                {s.enroll_status === 'approved'
+                  ? <span className="badge green">A'zo</span>
+                  : s.enroll_status === 'pending'
+                    ? <span className="badge amber">So'rov bor</span>
+                    : <span className="add">+ Qo'shish</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {pending.map((p) => (
         <div key={p.id} className="lesson-line" style={{ background: '#fff7e0' }}>
           <div className="info">
