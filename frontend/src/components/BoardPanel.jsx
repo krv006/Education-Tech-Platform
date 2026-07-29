@@ -1,14 +1,20 @@
 // Doska (EduTech.docx: Zoom whiteboard uslubi) — lenta formatida sheet'lar
 // (tepadan pastga), sichqoncha bilan chizish, o'chirishga sabab majburiy.
+// ƒ𝑥 rejimi: doskaning istalgan joyiga bosib TO'G'RIDAN-TO'G'RI matn/formula
+// yoziladi (Photomath klaviaturasi pastda panel bo'lib turadi, javob berilmaydi).
 // Sync: 2.5s polling. Faqat platforma ichida ko'rinadi (auth talab qilinadi).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef, useCallback, useEffect, useImperativeHandle,
+  useLayoutEffect, useRef, useState,
+} from 'react'
 
 import api, { errMessage } from '../api/client'
-import MathCalc from './MathCalc'
+import MathKeyboard, { MATH_TEMPLATES } from './MathKeyboard'
 
 const COLORS = ['#1c1e3a', '#e03131', '#1a9f6c', '#2b6be4', '#f59f00']
 const W = 1600
 const H = 900
+const TEXT_SIZE = 22 // doska birligida — canvas'dagi render bilan bir xil
 
 function drawStrokes(canvas, strokes, live) {
   const ctx = canvas.getContext('2d')
@@ -73,7 +79,98 @@ function hitStroke(strokes, x, y) {
   return null
 }
 
-function SheetCanvas({ sheet, canDraw, tool, color, width, onStroke, onErase }) {
+// Doskaning USTIDA turgan matn kiritish maydoni — yozilayotgan matn xuddi
+// canvas'da chiziladigan joy va o'lchamda ko'rinadi. Klaviatura paneli bu
+// blokni ref orqali boshqaradi (insert/backspace/move/undo).
+const InlineMathEditor = forwardRef(function InlineMathEditor(
+  { x, y, scale, color, onSave, onCancel }, ref,
+) {
+  const [text, setText] = useState('')
+  const taRef = useRef(null)
+  const textRef = useRef('')  // joriy matn — bir tick ichida bir necha tugma bosilsa ham dolzarb
+  const caretRef = useRef(0)  // joriy kursor o'rni — DOM emas, shu manba ishlatiladi
+  const histRef = useRef([])
+
+  // Kursor faqat DOM yangilangach o'rnatilishi shart — aks holda controlled
+  // textarea qiymati almashganda kursor boshiga sakraydi
+  useLayoutEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(caretRef.current, caretRef.current)
+  }, [text])
+
+  function mutate(next, caret) {
+    histRef.current.push(textRef.current)
+    if (histRef.current.length > 100) histRef.current.shift()
+    textRef.current = next
+    caretRef.current = caret
+    setText(next)
+  }
+
+  useImperativeHandle(ref, () => ({
+    insert(tok, back = 0) {
+      const cur = textRef.current
+      const start = Math.min(caretRef.current, cur.length)
+      mutate(cur.slice(0, start) + tok + cur.slice(start), start + tok.length - back)
+    },
+    backspace() {
+      const cur = textRef.current
+      const start = Math.min(caretRef.current, cur.length)
+      if (start === 0) return
+      mutate(cur.slice(0, start - 1) + cur.slice(start), start - 1)
+    },
+    move(dir) {
+      const p = Math.max(0, Math.min(textRef.current.length, caretRef.current + dir))
+      caretRef.current = p
+      const el = taRef.current
+      if (el) { el.focus(); el.setSelectionRange(p, p) }
+    },
+    undo() {
+      const prev = histRef.current.pop()
+      if (prev === undefined) return
+      textRef.current = prev
+      caretRef.current = prev.length
+      setText(prev)
+    },
+    save() {
+      if (textRef.current.trim()) onSave(textRef.current)
+      else onCancel()
+    },
+  }), [onSave, onCancel])
+
+  const fontPx = TEXT_SIZE * scale
+  return (
+    <textarea
+      ref={taRef}
+      className="board-inline-editor"
+      style={{
+        left: `${(x / W) * 100}%`,
+        top: `${(y / H) * 100}%`,
+        width: `${(1 - x / W) * 100}%`,
+        fontSize: `${fontPx}px`,
+        color,
+      }}
+      rows={text.split('\n').length}
+      value={text}
+      onChange={(e) => {
+        histRef.current.push(textRef.current)
+        textRef.current = e.target.value
+        caretRef.current = e.target.selectionStart
+        setText(e.target.value)
+      }}
+      onSelect={(e) => { caretRef.current = e.target.selectionStart }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+      spellCheck={false}
+      autoFocus
+    />
+  )
+})
+
+function SheetCanvas({
+  sheet, canDraw, tool, color, width,
+  onStroke, onErase, mathEdit, editorRef, onMathStart, onMathSave, onMathCancel,
+}) {
   const ref = useRef(null)
   const liveRef = useRef(null) // chizilayotgan stroke
 
@@ -90,6 +187,12 @@ function SheetCanvas({ sheet, canDraw, tool, color, width, onStroke, onErase }) 
     if (!canDraw) return
     e.preventDefault()
     const [x, y] = toBoard(e)
+    if (tool === 'math') {
+      // bosgan joyga matn bloki ochiladi — masshtab kursor/shrift mosligi uchun
+      const r = ref.current.getBoundingClientRect()
+      onMathStart(sheet.index, x, y, r.width / W)
+      return
+    }
     if (tool === 'erase') {
       const hit = hitStroke(sheet.strokes, x, y)
       if (hit) onErase(sheet.index, hit)
@@ -115,19 +218,33 @@ function SheetCanvas({ sheet, canDraw, tool, color, width, onStroke, onErase }) 
     if (live && live.points.length >= 2) onStroke(sheet.index, live)
   }
 
+  const cursorCls = tool === 'erase' ? 'erasing' : tool === 'math' ? 'texting' : 'drawing'
   return (
     <div className="board-sheet">
       <div className="board-sheet-label">Sheet {sheet.index + 1}</div>
-      <canvas
-        ref={ref}
-        width={1120}
-        height={630}
-        className={canDraw ? (tool === 'erase' ? 'erasing' : 'drawing') : ''}
-        onPointerDown={down}
-        onPointerMove={move}
-        onPointerUp={up}
-        onPointerLeave={up}
-      />
+      <div className="board-canvas-wrap">
+        <canvas
+          ref={ref}
+          width={1120}
+          height={630}
+          className={canDraw ? cursorCls : ''}
+          onPointerDown={down}
+          onPointerMove={move}
+          onPointerUp={up}
+          onPointerLeave={up}
+        />
+        {mathEdit && (
+          <InlineMathEditor
+            ref={editorRef}
+            x={mathEdit.x}
+            y={mathEdit.y}
+            scale={mathEdit.scale}
+            color={color}
+            onSave={onMathSave}
+            onCancel={onMathCancel}
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -140,9 +257,10 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   const [error, setError] = useState('')
   const [eraseTarget, setEraseTarget] = useState(null) // {sheetIndex, stroke}
   const [eraseReason, setEraseReason] = useState('')
-  // 𝑓𝑥 Matematik doska (Photomath klaviaturasi) — o'quvchi o'zi yechadi,
-  // javob avtomatik chiqmaydi; yozgan ishi doskaga blok bo'lib tushadi
-  const [mathOpen, setMathOpen] = useState(false)
+  // ƒ𝑥 rejimi: doskadagi aktiv matn bloki (bo'lmasa null)
+  const [mathEdit, setMathEdit] = useState(null) // {sheetIndex, x, y, scale}
+  const [showTemplates, setShowTemplates] = useState(false)
+  const editorRef = useRef(null) // InlineMathEditor imperativ API
 
   const load = useCallback(async () => {
     try {
@@ -158,6 +276,13 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   }, [load])
 
   const canDraw = !readOnly && !!board?.can_draw
+  const isMathSubject = /matem|algebra|geometr|fizik/i.test(board?.subject || '')
+
+  // Rejim almashganda yozilayotgan matn yo'qolmasin — avval saqlaymiz
+  function switchTool(next) {
+    if (mathEdit) editorRef.current?.save()
+    setTool(next)
+  }
 
   async function sendStroke(sheetIndex, stroke) {
     // optimistik: darhol ko'rsatamiz
@@ -170,6 +295,20 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
     try {
       await api.post(`/board/${lessonId}/stroke/`, { sheet: sheetIndex, stroke })
     } catch (e) { setError(errMessage(e)) }
+  }
+
+  function startMathEdit(sheetIndex, x, y, scale) {
+    // boshqa joyga bosilsa — oldingi blok avval doskaga tushadi
+    if (mathEdit) editorRef.current?.save()
+    setMathEdit({ sheetIndex, x, y, scale })
+    setShowTemplates(false)
+  }
+
+  function saveMathText(text) {
+    const { sheetIndex, x, y } = mathEdit
+    setMathEdit(null)
+    if (!text.trim()) return
+    sendStroke(sheetIndex, { type: 'text', text, x, y, size: TEXT_SIZE, color })
   }
 
   async function confirmErase() {
@@ -187,25 +326,6 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   async function addSheet() {
     try {
       await api.post(`/board/${lessonId}/sheet/`)
-      load()
-    } catch (e) { setError(errMessage(e)) }
-  }
-
-  async function placeMathText(text) {
-    // o'quvchining yozgan ishi bitta blok bo'lib oxirgi sheet'ga tushadi
-    const sheet = board.sheets[board.sheets.length - 1]
-    const existingTexts = sheet.strokes.filter((s) => s.type === 'text').length
-    const el = {
-      type: 'text',
-      text,
-      x: 60,
-      y: 50 + (existingTexts % 4) * 200,
-      size: 22,
-      color,
-    }
-    setMathOpen(false)
-    try {
-      await api.post(`/board/${lessonId}/stroke/`, { sheet: sheet.index, stroke: el })
       load()
     } catch (e) { setError(errMessage(e)) }
   }
@@ -236,27 +356,27 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
                   key={c}
                   className={`board-color ${color === c && tool === 'pen' ? 'on' : ''}`}
                   style={{ background: c }}
-                  onClick={() => { setColor(c); setTool('pen') }}
+                  onClick={() => { setColor(c); switchTool('pen') }}
                 />
               ))}
             </div>
-            <button className={`board-tool ${tool === 'pen' ? 'on' : ''}`} onClick={() => setTool('pen')}>✏️</button>
+            <button className={`board-tool ${tool === 'pen' ? 'on' : ''}`} onClick={() => switchTool('pen')}>✏️</button>
             <button
               className={`board-tool ${tool === 'erase' ? 'on' : ''}`}
               title="O'chirish (sabab so'raladi)"
-              onClick={() => setTool('erase')}
+              onClick={() => switchTool('erase')}
             >🧽</button>
             <select className="board-width" value={width} onChange={(e) => setWidth(Number(e.target.value))}>
               <option value={2}>Ingichka</option>
               <option value={4}>O'rta</option>
               <option value={8}>Yo'g'on</option>
             </select>
-            {/* Fanga mos vosita: matematikada Photomath uslubidagi klaviatura (EduTech.docx) */}
-            {/matem|algebra|geometr|fizik/i.test(board.subject || '') && (
+            {/* Fanga mos vosita: matematik rejim — doskaga bosib to'g'ridan-to'g'ri yozasiz */}
+            {isMathSubject && (
               <button
-                className="board-tool formula"
-                title="Matematik doska — barcha belgilar bilan o'zingiz yechasiz"
-                onClick={() => setMathOpen(true)}
+                className={`board-tool formula ${tool === 'math' ? 'on' : ''}`}
+                title="Matematik rejim — doskaga bosib yozasiz, o'zingiz yechasiz"
+                onClick={() => switchTool(tool === 'math' ? 'pen' : 'math')}
               >ƒ𝑥</button>
             )}
           </>
@@ -287,13 +407,46 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
             width={width}
             onStroke={sendStroke}
             onErase={(sheetIndex, stroke) => setEraseTarget({ sheetIndex, stroke })}
+            mathEdit={mathEdit?.sheetIndex === sheet.index ? mathEdit : null}
+            editorRef={editorRef}
+            onMathStart={startMathEdit}
+            onMathSave={saveMathText}
+            onMathCancel={() => setMathEdit(null)}
           />
         ))}
       </div>
 
-      {/* 𝑓𝑥 Matematik doska — Photomath klaviaturasi, javob berilmaydi */}
-      {mathOpen && (
-        <MathCalc onPlace={placeMathText} onClose={() => setMathOpen(false)} />
+      {/* ƒ𝑥 rejimida hali joy tanlanmagan — yo'l-yo'riq */}
+      {tool === 'math' && !mathEdit && (
+        <div className="board-math-hint">✍️ Doskaning istalgan joyiga bosing — o'sha yerga yozasiz</div>
+      )}
+
+      {/* Photomath klaviaturasi — matn bloki ochiq bo'lganda pastda turadi.
+          onMouseDown preventDefault: tugma bosilganda doskadagi kursor o'chmasin */}
+      {mathEdit && (
+        <div className="board-mathbar" onMouseDown={(e) => e.preventDefault()}>
+          <div className="mc-bar-actions">
+            <button className="mc-templates-btn" onClick={() => setShowTemplates((v) => !v)}>📚</button>
+            <span className="mc-hint">o'zingiz yechasiz — javob berilmaydi</span>
+            <button className="btn secondary sm" onClick={() => setMathEdit(null)}>✕ Bekor</button>
+            <button className="mc-place" onClick={() => editorRef.current?.save()}>✓ Doskaga yozish</button>
+          </div>
+          {showTemplates && (
+            <div className="mc-templates">
+              {MATH_TEMPLATES.map((t) => (
+                <button
+                  key={t.name}
+                  className="mc-template-row"
+                  onClick={() => { editorRef.current?.insert(t.text); setShowTemplates(false) }}
+                >
+                  <b>{t.name}</b>
+                  <span>{t.text.split('\n')[0]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <MathKeyboard api={editorRef} />
+        </div>
       )}
 
       {/* O'chirish sababi — majburiy */}
