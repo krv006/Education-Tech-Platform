@@ -24,6 +24,14 @@
 	# React SPA — qolgan hamma yo'llar index.html ga (client-side routing)
 	handle {
 		root * /srv/www
+		# Asset'lar nomida hash bor — abadiy keshlansa bo'ladi;
+		# index.html esa HECH QACHON keshlanmasin (yangi deploy darhol ko'rinsin)
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@page {
+			not path /assets/*
+		}
+		header @page Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
