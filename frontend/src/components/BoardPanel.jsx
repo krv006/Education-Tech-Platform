@@ -188,16 +188,20 @@ function SheetCanvas({
     return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H]
   }
 
+  // ƒ𝑥 joylashtirish "click"da — telefonda doskani barmoq bilan surish (pan)
+  // tasodifan matn bloki ochib yubormasin (scroll'dan keyin click kelmaydi)
+  function clickMath(e) {
+    if (!canDraw || tool !== 'math') return
+    const [x, y] = toBoard(e)
+    const r = ref.current.getBoundingClientRect()
+    onMathStart(sheet.index, x, y, r.width / W)
+  }
+
   function down(e) {
     if (!canDraw) return
+    if (tool === 'math') return // joylashtirish clickMath'da
     e.preventDefault()
     const [x, y] = toBoard(e)
-    if (tool === 'math') {
-      // bosgan joyga matn bloki ochiladi — masshtab kursor/shrift mosligi uchun
-      const r = ref.current.getBoundingClientRect()
-      onMathStart(sheet.index, x, y, r.width / W)
-      return
-    }
     if (tool === 'erase') {
       const hit = hitStroke(sheet.strokes, x, y)
       if (hit) onErase(sheet.index, hit)
@@ -233,6 +237,7 @@ function SheetCanvas({
           width={1120}
           height={630}
           className={canDraw ? cursorCls : ''}
+          onClick={clickMath}
           onPointerDown={down}
           onPointerMove={move}
           onPointerUp={up}

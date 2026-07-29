@@ -1388,38 +1388,6 @@ a {
 }
 .mc-place:hover { background: #148257; }
 
-/* ─── Mobil: klaviatura to'liq enli bottom-sheet, barmoqqa mos tugmalar ─── */
-@media (max-width: 640px) {
-  .board-toolbar { flex-wrap: wrap; row-gap: 6px; }
-  .board-ribbon { padding: 8px; gap: 12px; }
-  .board-sheet-label { font-size: 10px; margin-bottom: 2px; }
-  .board-mathbar {
-    left: 6px;
-    right: 6px;
-    bottom: 74px;
-    transform: none;
-    width: auto;
-    padding: 10px;
-    gap: 7px;
-    border-radius: 18px;
-  }
-  .mc-hint { display: none; } /* joy tor — yorliq faqat desktopda */
-  .mc-cancel { margin-left: auto; }
-  .mc-ctrl button { padding: 9px 0; font-size: 15px; }
-  .mc-tabs { justify-content: space-between; }
-  .mc-tabs button { padding: 5px 11px; font-size: 12px; flex: 1; text-align: center; }
-  .mc-grid { gap: 6px; }
-  .mc-grid button { padding: 12px 0; font-size: 16.5px; border-radius: 11px; }
-  .mc-grid button.fn { font-size: 13px; }
-  .mc-place { padding: 8px 14px; font-size: var(--fs-xs); }
-  .board-math-hint {
-    bottom: 84px;
-    width: max-content;
-    max-width: calc(100% - 24px);
-    font-size: var(--fs-xs);
-    text-align: center;
-  }
-}
 .board-width {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
@@ -1457,11 +1425,13 @@ a {
   border-radius: 10px;
   background: #fff;
   display: block;
-  touch-action: none;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
 }
-.board-sheet canvas.drawing { cursor: crosshair; }
-.board-sheet canvas.erasing { cursor: cell; }
+/* touch-action faqat chizish/o'chirishda o'chadi — qolgan rejimlarda doska
+   barmoq bilan bemalol suriladi (telefonda doska kattalashtirilgan) */
+.board-sheet canvas.drawing { cursor: crosshair; touch-action: none; }
+.board-sheet canvas.erasing { cursor: cell; touch-action: none; }
+.board-sheet canvas.texting { touch-action: pan-x pan-y; }
 .msg-board-link {
   display: inline-block;
   background: var(--indigo);
@@ -1647,4 +1617,48 @@ a {
 @media (max-width: 400px) {
   .app-header .user-name { display: none; }
   .logo { font-size: 17px; }
+}
+
+/* ─── Mobil doska: asosiy userlar telefonda — doska katta, klaviatura bottom-sheet ───
+   MUHIM: bu blok fayl OXIRIDA turishi shart — bazaviy .board-* qoidalaridan keyin,
+   aks holda bir xil spetsifiklikda bazaviy qoida ustun keladi. */
+@media (max-width: 640px) {
+  .board-toolbar { flex-wrap: wrap; row-gap: 6px; }
+  /* Doska telefonda KATTA ko'rsatiladi — yon tomonga barmoq bilan surib
+     ko'riladi (pen/eraser'da emas), yozuv o'qiladigan bo'ladi */
+  .board-ribbon {
+    padding: 8px;
+    gap: 12px;
+    overflow-x: auto;
+    justify-items: start;
+    -webkit-overflow-scrolling: touch;
+  }
+  .board-sheet { width: 960px; max-width: none; }
+  .board-sheet-label { font-size: 10px; margin-bottom: 2px; }
+  .board-mathbar {
+    left: 6px;
+    right: 6px;
+    bottom: 74px;
+    transform: none;
+    width: auto;
+    padding: 10px;
+    gap: 7px;
+    border-radius: 18px;
+  }
+  .mc-hint { display: none; } /* joy tor — yorliq faqat desktopda */
+  .mc-cancel { margin-left: auto; }
+  .mc-ctrl button { padding: 9px 0; font-size: 15px; }
+  .mc-tabs { justify-content: space-between; }
+  .mc-tabs button { padding: 5px 11px; font-size: 12px; flex: 1; text-align: center; }
+  .mc-grid { gap: 6px; }
+  .mc-grid button { padding: 12px 0; font-size: 16.5px; border-radius: 11px; }
+  .mc-grid button.fn { font-size: 13px; }
+  .mc-place { padding: 8px 14px; font-size: var(--fs-xs); }
+  .board-math-hint {
+    bottom: 84px;
+    width: max-content;
+    max-width: calc(100% - 24px);
+    font-size: var(--fs-xs);
+    text-align: center;
+  }
 }
