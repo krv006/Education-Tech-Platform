@@ -52,10 +52,30 @@ def get_board(*, user: User, lesson_id) -> dict:
         'can_draw': can_draw(user, lesson),
         'is_teacher': _is_teacher(user, lesson),
         'size': [SHEET_W, SHEET_H],
+        # fanga mos doska vositalari uchun (masalan matematikada ƒ Formula)
+        'subject': lesson.course.subject,
     }
 
 
 def _validate_stroke(stroke: dict) -> dict:
+    # Matn elementi (formula bloklari) — chiziq emas
+    if stroke.get('type') == 'text':
+        text = str(stroke.get('text') or '').strip()
+        if not text:
+            raise ValidationError({'stroke': "Matn bo'sh."})
+        try:
+            x = float(stroke.get('x', 60))
+            y = float(stroke.get('y', 60))
+        except (TypeError, ValueError):
+            raise ValidationError({'stroke': "Koordinata noto'g'ri."})
+        return {
+            'type': 'text',
+            'text': text[:2000],
+            'x': round(max(0, min(SHEET_W - 40, x)), 1),
+            'y': round(max(0, min(SHEET_H - 20, y)), 1),
+            'size': max(12, min(48, int(stroke.get('size', 24)))),
+            'color': str(stroke.get('color', '#1c1e3a'))[:9],
+        }
     points = stroke.get('points') or []
     if not isinstance(points, list) or len(points) < 2:
         raise ValidationError({'stroke': 'Kamida 2 nuqta kerak.'})
@@ -170,6 +190,20 @@ def generate_pdf(lesson: Lesson):
         c.setFillColorRGB(1, 1, 1)
         c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
         for s in sheet.strokes:
+            if s.get('type') == 'text':
+                try:
+                    c.setFillColor(HexColor(s.get('color', '#1c1e3a')))
+                except ValueError:
+                    c.setFillColor(HexColor('#1c1e3a'))
+                size = max(6, s.get('size', 24) * scale)
+                c.setFont('Courier', size)
+                y = page_h - s.get('y', 60) * scale
+                for line in str(s.get('text', '')).splitlines():
+                    # Courier faqat latin-1 — unicode ramkalarni yaqin belgilarga almashtiramiz
+                    safe = line.encode('latin-1', 'replace').decode('latin-1')
+                    c.drawString(s.get('x', 60) * scale, y, safe)
+                    y -= size * 1.3
+                continue
             try:
                 c.setStrokeColor(HexColor(s.get('color', '#1c1e3a')))
             except ValueError:
@@ -211,6 +245,18 @@ def publish_board_pdf(lesson: Lesson):
         ),
     )
     room.save(update_fields=['updated_at'])
+
+
+def solve_formula(*, user: User, lesson_id, expr: str) -> dict:
+    """Photomath uslubi: formulani avtomatik yechish/soddalashtirish (SymPy)."""
+    lesson = _get_lesson(lesson_id)
+    if not can_view(user, lesson):
+        raise PermissionDenied("Ruxsat yo'q.")
+    from .math_solver import MathError, solve_math
+    try:
+        return solve_math(expr)
+    except MathError as exc:
+        raise ValidationError({'expr': str(exc)})
 
 
 def pdf_file(*, user: User, lesson_id):

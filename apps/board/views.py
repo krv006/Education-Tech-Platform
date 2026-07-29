@@ -61,6 +61,18 @@ class GrantView(APIView):
         return Response({'ok': True})
 
 
+class SolveView(APIView):
+    """Photomath uslubi: formula matnini yechish (SymPy)."""
+
+    permission_classes = [RequirePerm('room.token')]
+
+    def post(self, request, lesson_id):
+        result = services.solve_formula(
+            user=request.user, lesson_id=lesson_id, expr=request.data.get('expr'),
+        )
+        return Response(result)
+
+
 class PdfView(APIView):
     permission_classes = [RequirePerm('room.token')]
 

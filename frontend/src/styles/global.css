@@ -1180,6 +1180,31 @@ a {
   cursor: pointer;
 }
 .board-tool.on { background: var(--indigo); }
+.board-tool.formula {
+  width: auto;
+  padding: 0 12px;
+  font-weight: 800;
+  font-style: italic;
+  background: #1a9f6c;
+}
+.board-tool.formula:hover { background: #148257; }
+.formula-card { width: min(560px, 100%); }
+.formula-preview {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+  background: #f7f8fd;
+}
+.formula-preview pre {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 15px;
+  overflow-x: auto;
+  margin: 0;
+}
+.formula-preview .answer { font-size: 15px; color: #148257; }
+.formula-preview ul { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
 .board-width {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;

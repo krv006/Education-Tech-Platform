@@ -16,6 +16,17 @@ function drawStrokes(canvas, strokes, live) {
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   const paint = (st) => {
+    if (st.type === 'text') {
+      // formula bloki — monospace, ko'p qatorli
+      const size = (st.size || 24) * s
+      ctx.fillStyle = st.color || '#1c1e3a'
+      ctx.font = `${size}px Consolas, 'Courier New', monospace`
+      ctx.textBaseline = 'top'
+      String(st.text).split('\n').forEach((line, i) => {
+        ctx.fillText(line, st.x * s, (st.y + i * (st.size || 24) * 1.3) * s)
+      })
+      return
+    }
     const pts = st.points || []
     if (pts.length < 2) return
     ctx.strokeStyle = st.color || '#1c1e3a'
@@ -35,6 +46,15 @@ function drawStrokes(canvas, strokes, live) {
 function hitStroke(strokes, x, y) {
   const th = 14
   for (let i = strokes.length - 1; i >= 0; i--) {
+    const st = strokes[i]
+    if (st.type === 'text') {
+      // matn bloki — taxminiy bounding box
+      const lines = String(st.text).split('\n')
+      const wBox = Math.max(...lines.map((l) => l.length)) * (st.size || 24) * 0.62
+      const hBox = lines.length * (st.size || 24) * 1.3
+      if (x >= st.x && x <= st.x + wBox && y >= st.y && y <= st.y + hBox) return st
+      continue
+    }
     const pts = strokes[i].points || []
     for (let j = 0; j < pts.length - 1; j++) {
       const [x1, y1] = pts[j]
@@ -119,6 +139,11 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   const [error, setError] = useState('')
   const [eraseTarget, setEraseTarget] = useState(null) // {sheetIndex, stroke}
   const [eraseReason, setEraseReason] = useState('')
+  // ƒ Formula (Photomath uslubi): yozasiz -> tizim yechadi -> doskaga qo'yiladi
+  const [formulaOpen, setFormulaOpen] = useState(false)
+  const [formulaExpr, setFormulaExpr] = useState('')
+  const [solving, setSolving] = useState(false)
+  const [solution, setSolution] = useState(null) // {pretty, result, steps}
 
   const load = useCallback(async () => {
     try {
@@ -167,6 +192,43 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
     } catch (e) { setError(errMessage(e)) }
   }
 
+  async function solveFormula() {
+    setSolving(true)
+    setSolution(null)
+    try {
+      const { data } = await api.post(`/board/${lessonId}/solve/`, { expr: formulaExpr })
+      setSolution(data)
+    } catch (e) { setError(errMessage(e)) }
+    setSolving(false)
+  }
+
+  async function placeFormula() {
+    // formula + javob + qadamlar bitta blok bo'lib oxirgi sheet'ga tushadi
+    const lines = [
+      solution.pretty,
+      '',
+      `Javob: ${solution.result}`,
+      ...solution.steps.map((s) => `• ${s}`),
+    ]
+    const sheet = board.sheets[board.sheets.length - 1]
+    const existingTexts = sheet.strokes.filter((s) => s.type === 'text').length
+    const el = {
+      type: 'text',
+      text: lines.join('\n'),
+      x: 60,
+      y: 50 + (existingTexts % 4) * 200,
+      size: 22,
+      color,
+    }
+    setFormulaOpen(false)
+    setFormulaExpr('')
+    setSolution(null)
+    try {
+      await api.post(`/board/${lessonId}/stroke/`, { sheet: sheet.index, stroke: el })
+      load()
+    } catch (e) { setError(errMessage(e)) }
+  }
+
   async function downloadPdf() {
     try {
       const { data } = await api.get(`/board/${lessonId}/pdf/`, { responseType: 'blob' })
@@ -208,6 +270,14 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
               <option value={4}>O'rta</option>
               <option value={8}>Yo'g'on</option>
             </select>
+            {/* Fanga mos vosita: matematikada formula yechuvchi (EduTech.docx) */}
+            {/matem|algebra|geometr|fizik/i.test(board.subject || '') && (
+              <button
+                className="board-tool formula"
+                title="Formula yozing — tizim o'zi yechib doskaga qo'yadi"
+                onClick={() => setFormulaOpen(true)}
+              >ƒ𝑥</button>
+            )}
           </>
         )}
         {!readOnly && board.is_teacher && (
@@ -239,6 +309,45 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
           />
         ))}
       </div>
+
+      {/* ƒ Formula — yozasiz, tizim yechadi (Photomath uslubi) */}
+      {formulaOpen && (
+        <div className="chat-modal" onClick={() => setFormulaOpen(false)}>
+          <div className="chat-modal-card formula-card" onClick={(e) => e.stopPropagation()}>
+            <h3>ƒ𝑥 Formula yechish</h3>
+            <p className="muted">
+              Yozing: <code>x^2 - 5x + 6 = 0</code> yoki <code>(x^2-9)/(x-3)</code> — tizim
+              o'zi yechadi va doskaga qo'yadi.
+            </p>
+            <div className="row">
+              <input
+                className="input"
+                placeholder="Masalan: 2x^2 + 3x - 5 = 0"
+                value={formulaExpr}
+                onChange={(e) => { setFormulaExpr(e.target.value); setSolution(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && formulaExpr.trim()) solveFormula() }}
+                autoFocus
+              />
+              <button className="btn sm" disabled={!formulaExpr.trim() || solving} onClick={solveFormula}>
+                {solving ? '…' : 'Yechish'}
+              </button>
+            </div>
+            {solution && (
+              <div className="formula-preview">
+                <pre>{solution.pretty}</pre>
+                <div className="answer">Javob: <b>{solution.result}</b></div>
+                {solution.steps.length > 0 && (
+                  <ul>
+                    {solution.steps.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                )}
+                <button className="btn sm" onClick={placeFormula}>📌 Doskaga qo'yish</button>
+              </div>
+            )}
+            <button className="btn secondary sm" onClick={() => setFormulaOpen(false)}>Yopish</button>
+          </div>
+        </div>
+      )}
 
       {/* O'chirish sababi — majburiy */}
       {eraseTarget && (

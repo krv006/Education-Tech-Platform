@@ -81,6 +81,23 @@ class BoardTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r['Content-Type'], 'application/pdf')
 
+    def test_solve_and_place_formula(self):
+        # Photomath uslubi: yechish
+        r = self.api(self.teacher).post(self.url('solve/'), {'expr': 'x^2 - 5x + 6 = 0'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('x = 2', r.data['result'])
+        self.assertTrue(any('Diskriminant' in s for s in r.data['steps']))
+        # yaroqsiz formula
+        r = self.api(self.teacher).post(self.url('solve/'), {'expr': '???'}, format='json')
+        self.assertEqual(r.status_code, 400)
+        # matn elementini doskaga qo'yish
+        r = self.api(self.teacher).post(self.url('stroke/'), {
+            'sheet': 0,
+            'stroke': {'type': 'text', 'text': 'x = 2, x = 3', 'x': 60, 'y': 50, 'size': 22},
+        }, format='json')
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['type'], 'text')
+
     def test_multiple_sheets(self):
         r = self.api(self.teacher).post(self.url('sheet/'))
         self.assertEqual(r.data['index'], 0)
