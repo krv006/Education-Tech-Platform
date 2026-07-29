@@ -1,0 +1,225 @@
+"""Doska service layer — chizish, o'chirish (sabab bilan), ruxsat, PDF -> chat."""
+import uuid
+
+from django.conf import settings
+from django.db import transaction
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+
+from apps.accounts.models import User
+from apps.core import audit
+from apps.lessons.models import Enrollment, Lesson
+
+from .models import SHEET_H, SHEET_W, BoardErase, BoardGrant, BoardSheet
+
+MAX_STROKE_POINTS = 2000
+MAX_STROKES_PER_SHEET = 3000
+
+
+def _get_lesson(lesson_id) -> Lesson:
+    try:
+        return Lesson.objects.select_related('course').get(pk=lesson_id)
+    except (Lesson.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Dars topilmadi.')
+
+
+def _is_teacher(user: User, lesson: Lesson) -> bool:
+    return lesson.course.teacher_id == user.id
+
+
+def can_view(user: User, lesson: Lesson) -> bool:
+    if _is_teacher(user, lesson):
+        return True
+    return Enrollment.objects.filter(
+        course=lesson.course, student=user, status=Enrollment.Status.APPROVED,
+    ).exists()
+
+
+def can_draw(user: User, lesson: Lesson) -> bool:
+    if _is_teacher(user, lesson):
+        return True
+    return BoardGrant.objects.filter(lesson=lesson, student=user).exists()
+
+
+def get_board(*, user: User, lesson_id) -> dict:
+    lesson = _get_lesson(lesson_id)
+    if not can_view(user, lesson):
+        raise PermissionDenied("Doskani ko'rish huquqingiz yo'q.")
+    sheets = list(lesson.board_sheets.all())
+    if not sheets:
+        sheets = [BoardSheet.objects.create(lesson=lesson, index=0)]
+    return {
+        'sheets': [{'index': s.index, 'strokes': s.strokes} for s in sheets],
+        'can_draw': can_draw(user, lesson),
+        'is_teacher': _is_teacher(user, lesson),
+        'size': [SHEET_W, SHEET_H],
+    }
+
+
+def _validate_stroke(stroke: dict) -> dict:
+    points = stroke.get('points') or []
+    if not isinstance(points, list) or len(points) < 2:
+        raise ValidationError({'stroke': 'Kamida 2 nuqta kerak.'})
+    if len(points) > MAX_STROKE_POINTS:
+        points = points[::2][:MAX_STROKE_POINTS]  # siyraklashtirish
+    clean = []
+    for p in points:
+        try:
+            x, y = float(p[0]), float(p[1])
+        except (TypeError, ValueError, IndexError):
+            raise ValidationError({'stroke': "Nuqta formati noto'g'ri."})
+        clean.append([round(max(0, min(SHEET_W, x)), 1), round(max(0, min(SHEET_H, y)), 1)])
+    color = str(stroke.get('color', '#1c1e3a'))[:9]
+    width = max(1, min(24, int(stroke.get('width', 3))))
+    return {'points': clean, 'color': color, 'width': width}
+
+
+@transaction.atomic
+def add_stroke(*, user: User, lesson_id, sheet_index: int, stroke: dict) -> dict:
+    lesson = _get_lesson(lesson_id)
+    if not can_draw(user, lesson):
+        raise PermissionDenied("Chizish uchun o'qituvchidan ruxsat oling.")
+    sheet, _ = BoardSheet.objects.select_for_update().get_or_create(
+        lesson=lesson, index=int(sheet_index or 0),
+    )
+    if len(sheet.strokes) >= MAX_STROKES_PER_SHEET:
+        raise ValidationError("Bu sheet to'ldi — yangisini oching.")
+    clean = _validate_stroke(stroke)
+    clean['id'] = uuid.uuid4().hex[:12]
+    clean['by'] = user.first_name or user.username
+    sheet.strokes = [*sheet.strokes, clean]
+    sheet.save(update_fields=['strokes', 'updated_at'])
+    return clean
+
+
+@transaction.atomic
+def add_sheet(*, user: User, lesson_id) -> int:
+    lesson = _get_lesson(lesson_id)
+    if not _is_teacher(user, lesson):
+        raise PermissionDenied("Yangi sheet'ni faqat o'qituvchi ochadi.")
+    last = lesson.board_sheets.order_by('-index').first()
+    index = (last.index + 1) if last else 0
+    BoardSheet.objects.create(lesson=lesson, index=index)
+    return index
+
+
+@transaction.atomic
+def erase_strokes(*, user: User, lesson_id, sheet_index: int, stroke_ids: list, reason: str) -> int:
+    """O'chirish — sabab MAJBURIY (EduTech.docx: "ochirish sababi bosh bolishi kere emas")."""
+    reason = (reason or '').strip()
+    if not reason:
+        raise ValidationError({'reason': "O'chirish sababi bo'sh bo'lishi mumkin emas."})
+    if not stroke_ids:
+        raise ValidationError({'stroke_ids': "Nimani o'chirish ko'rsatilmadi."})
+    lesson = _get_lesson(lesson_id)
+    if not can_draw(user, lesson):
+        raise PermissionDenied("O'chirish uchun ruxsat yo'q.")
+    try:
+        sheet = BoardSheet.objects.select_for_update().get(lesson=lesson, index=int(sheet_index or 0))
+    except BoardSheet.DoesNotExist:
+        raise NotFound('Sheet topilmadi.')
+    ids = set(stroke_ids)
+    before = len(sheet.strokes)
+    sheet.strokes = [s for s in sheet.strokes if s.get('id') not in ids]
+    removed = before - len(sheet.strokes)
+    if removed:
+        sheet.save(update_fields=['strokes', 'updated_at'])
+        BoardErase.objects.create(
+            lesson=lesson, user=user, sheet_index=sheet.index,
+            reason=reason, stroke_ids=list(ids),
+        )
+        audit.record(action='board.erase', actor=user, target=lesson, meta={'reason': reason, 'count': removed})
+    return removed
+
+
+@transaction.atomic
+def grant_draw(*, teacher: User, lesson_id, student_id) -> bool:
+    lesson = _get_lesson(lesson_id)
+    if not _is_teacher(teacher, lesson):
+        raise PermissionDenied("Ruxsatni faqat kurs o'qituvchisi beradi.")
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+    BoardGrant.objects.get_or_create(lesson=lesson, student=student)
+    audit.record(action='board.grant', actor=teacher, target=lesson, meta={'student_id': str(student_id)})
+    return True
+
+
+# ── PDF: dars tugagach doska lentasi PDF bo'lib guruh chatga tushadi ──────
+
+def _pdf_path(lesson: Lesson):
+    from pathlib import Path
+    base = Path(settings.BASE_DIR) / 'private' / 'boards'
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f'{lesson.id}.pdf'
+
+
+def generate_pdf(lesson: Lesson):
+    """Sheet'larni PDF sahifalarga chizadi (reportlab). Bo'sh doska -> None."""
+    sheets = [s for s in lesson.board_sheets.all() if s.strokes]
+    if not sheets:
+        return None
+    from reportlab.lib.colors import HexColor
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    path = _pdf_path(lesson)
+    page_w, page_h = 842, 595  # A4 landshaft (pt)
+    scale = min(page_w / SHEET_W, page_h / SHEET_H)
+    c = pdf_canvas.Canvas(str(path), pagesize=(page_w, page_h))
+    for sheet in sheets:
+        c.setFillColorRGB(1, 1, 1)
+        c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+        for s in sheet.strokes:
+            try:
+                c.setStrokeColor(HexColor(s.get('color', '#1c1e3a')))
+            except ValueError:
+                c.setStrokeColor(HexColor('#1c1e3a'))
+            c.setLineWidth(max(1, s.get('width', 3) * scale))
+            c.setLineCap(1)
+            c.setLineJoin(1)
+            p = c.beginPath()
+            pts = s.get('points') or []
+            if len(pts) < 2:
+                continue
+            # PDF koordinatalari pastdan yuqoriga — y ni ag'daramiz
+            p.moveTo(pts[0][0] * scale, page_h - pts[0][1] * scale)
+            for x, y in pts[1:]:
+                p.lineTo(x * scale, page_h - y * scale)
+            c.drawPath(p, stroke=1, fill=0)
+        c.showPage()
+    c.save()
+    return path
+
+
+def publish_board_pdf(lesson: Lesson):
+    """finish_lesson'dan chaqiriladi: PDF yaratib, guruh chatga xabar tashlaydi.
+
+    Doska bo'sh bo'lsa jim o'tadi; xato dars yakunlashni to'xtatmasligi kerak.
+    """
+    path = generate_pdf(lesson)
+    if path is None:
+        return
+    from apps.chat import services as chat_services
+    from apps.chat.models import Message
+    room = chat_services.ensure_course_room(lesson.course)
+    Message.objects.create(
+        room=room,
+        sender=lesson.course.teacher,
+        text=(
+            f"📋 \"{lesson.title}\" darsining doskasi tayyor!\n"
+            f"Ko'rish va PDF: /boards/{lesson.id}"
+        ),
+    )
+    room.save(update_fields=['updated_at'])
+
+
+def pdf_file(*, user: User, lesson_id):
+    lesson = _get_lesson(lesson_id)
+    if not can_view(user, lesson):
+        raise PermissionDenied("Ruxsat yo'q.")
+    path = _pdf_path(lesson)
+    if not path.exists():
+        path = generate_pdf(lesson)
+        if path is None:
+            raise NotFound("Doska bo'sh — PDF yo'q.")
+    return path

@@ -10,3 +10,4 @@ livekit-api>=1.2
 gunicorn>=23.0
 whitenoise>=6.8
 redis>=5.0
+reportlab>=4.2

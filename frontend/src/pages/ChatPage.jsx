@@ -2,11 +2,21 @@
 // Chapda qidiruv + chatlar (har kurs = bitta guruh chat, 1 qatordan),
 // o'ngda suhbat; kurs chatida tablar: Chat | Darslar | O'quvchilar.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import api, { errMessage } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { fmtTime, fmtWhen, LESSON_STATUS, sameDay } from '../lib/ui'
+
+// Xabar ichidagi /boards/<id> havolasini bosiladigan qilamiz (doska PDF xabari)
+function renderMsgText(text) {
+  const parts = String(text).split(/(\/boards\/[0-9a-f-]{36})/g)
+  return parts.map((p, i) =>
+    p.startsWith('/boards/')
+      ? <Link key={i} to={p} className="msg-board-link">📋 Doskani ochish</Link>
+      : p,
+  )
+}
 
 function fmtChatTime(iso) {
   const d = new Date(iso)
@@ -422,7 +432,7 @@ export default function ChatPage() {
                       <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
                         <div className="bubble">
                           {showName && <div className="sender">{m.sender.first_name || m.sender.username}</div>}
-                          <span className="text">{m.text}</span>
+                          <span className="text">{renderMsgText(m.text)}</span>
                           <span className="stamp">{fmtTime(new Date(m.created_at))}</span>
                         </div>
                       </div>

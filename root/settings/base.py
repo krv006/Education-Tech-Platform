@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'apps.lessons',
     'apps.live',
     'apps.chat',
+    'apps.board',
 ]
 
 MIDDLEWARE = [

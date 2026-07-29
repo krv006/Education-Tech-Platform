@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 
 import api, { errMessage } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import BoardPanel from '../components/BoardPanel'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -28,7 +29,7 @@ function fmtElapsed(sec) {
  *  - "view":  o'quvchi O'QITUVCHINING ekranini ko'rsatishini so'raydi
  *  - "share": o'quvchi O'ZINING ekranini ulashishga RUXSAT so'raydi
  *    (o'quvchi token'ida share yopiq — o'qituvchi tasdiqlasa backend ochadi) */
-function RoomTopBar({ title, isTeacher, userName, lessonId }) {
+function RoomTopBar({ title, isTeacher, userName, lessonId, onToggleBoard, boardOpen }) {
   const participants = useParticipants()
   const { localParticipant } = useLocalParticipant()
   const [elapsed, setElapsed] = useState(0)
@@ -44,13 +45,14 @@ function RoomTopBar({ title, isTeacher, userName, lessonId }) {
       const id = `${type}:${identity}`
       setRequests((prev) =>
         prev.some((r) => r.id === id) ? prev
-          : [...prev, { id, type, identity, name: data.name || "O'quvchi" }],
+          : [...prev, { id, type, identity, studentId: data.studentId, name: data.name || "O'quvchi" }],
       )
     } catch { /* yaroqsiz xabar — e'tiborsiz */ }
   }
 
   const viewCh = useDataChannel('screen-request', (msg) => pushRequest(msg, 'view'))
   const shareCh = useDataChannel('share-permission', (msg) => pushRequest(msg, 'share'))
+  useDataChannel('board-permission', (msg) => pushRequest(msg, 'board'))
   const grantedCh = useDataChannel('share-granted', (msg) => {
     // o'quvchiga: ruxsat berildi — endi pastdagi share tugmasi ochiladi
     if (isTeacher) return
@@ -83,6 +85,11 @@ function RoomTopBar({ title, isTeacher, userName, lessonId }) {
       try { await localParticipant.setScreenShareEnabled(true) } catch { /* bekor qilindi */ }
       return
     }
+    if (req.type === 'board') {
+      // doskada chizish ruxsati — o'quvchining polling'i 2.5s ichida ko'radi
+      try { await api.post(`/board/${lessonId}/grant/`, { student_id: req.studentId }) } catch { /* qayta so'raydi */ }
+      return
+    }
     // share ruxsati — backend LiveKit'da jonli ochadi
     try {
       await api.post('/live/allow-share/', { lesson_id: lessonId, identity: req.identity })
@@ -97,6 +104,9 @@ function RoomTopBar({ title, isTeacher, userName, lessonId }) {
         <span className="room-topbar-title">{title}</span>
         <span className="room-topbar-timer">{fmtElapsed(elapsed)}</span>
         <span className="room-topbar-count">👥 {participants.length}</span>
+        <button className="room-ask-btn" onClick={onToggleBoard}>
+          {boardOpen ? '✕ Doska' : '🖊 Doska'}
+        </button>
         {!isTeacher && (
           <>
             <button className="room-ask-btn" onClick={askView} disabled={!!sentView}>
@@ -118,9 +128,9 @@ function RoomTopBar({ title, isTeacher, userName, lessonId }) {
           {requests.map((r) => (
             <div key={r.id} className="screen-request-toast">
               <span className="msg">
-                {r.type === 'view'
-                  ? <><b>{r.name}</b> ekraningizni ko'rishni so'rayapti</>
-                  : <><b>{r.name}</b> o'z ekranini ulashishga ruxsat so'rayapti</>}
+                {r.type === 'view' && <><b>{r.name}</b> ekraningizni ko'rishni so'rayapti</>}
+                {r.type === 'share' && <><b>{r.name}</b> o'z ekranini ulashishga ruxsat so'rayapti</>}
+                {r.type === 'board' && <><b>{r.name}</b> doskada chizishga ruxsat so'rayapti</>}
               </span>
               <div className="row">
                 <button className="ok" onClick={() => approve(r)}>
@@ -138,6 +148,29 @@ function RoomTopBar({ title, isTeacher, userName, lessonId }) {
         </div>
       )}
     </>
+  )
+}
+
+/** Doska overlay — dars ichida; o'quvchi chizish ruxsatini shu yerdan so'raydi. */
+function BoardOverlay({ lessonId, userId, userName, isTeacher, onClose }) {
+  const [sent, setSent] = useState(false)
+  const { send } = useDataChannel('board-permission')
+
+  function requestAccess() {
+    send(enc.encode(JSON.stringify({ name: userName, studentId: userId })), { reliable: true })
+    setSent(true)
+    setTimeout(() => setSent(false), 30_000)
+  }
+
+  return (
+    <div className="board-overlay">
+      <BoardPanel
+        lessonId={lessonId}
+        onClose={onClose}
+        onRequestAccess={isTeacher ? undefined : requestAccess}
+        accessRequested={sent}
+      />
+    </div>
   )
 }
 
@@ -188,6 +221,7 @@ export default function LessonRoom() {
   const [conn, setConn] = useState(null)
   const [lesson, setLesson] = useState(null)
   const [choices, setChoices] = useState(null) // PreJoin natijasi — kamera/mikrofon tanlovi
+  const [showBoard, setShowBoard] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -288,7 +322,18 @@ export default function LessonRoom() {
           isTeacher={!!conn.is_teacher}
           userName={user.first_name || user.username}
           lessonId={lessonId}
+          onToggleBoard={() => setShowBoard((v) => !v)}
+          boardOpen={showBoard}
         />
+        {showBoard && (
+          <BoardOverlay
+            lessonId={lessonId}
+            userId={user.id}
+            userName={user.first_name || user.username}
+            isTeacher={!!conn.is_teacher}
+            onClose={() => setShowBoard(false)}
+          />
+        )}
         {user.role === 'student' && <AttentionGuard lessonId={lessonId} />}
         <VideoConference />
       </LiveKitRoom>

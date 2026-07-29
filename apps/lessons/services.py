@@ -133,12 +133,19 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
 
 @transaction.atomic
 def finish_lesson(*, teacher: User, lesson: Lesson, request=None) -> Lesson:
-    """Darsni yakunlash — ochiq davomatlarga left_at bosiladi."""
+    """Darsni yakunlash — ochiq davomatlarga left_at bosiladi, doska PDF chatga tushadi."""
     if lesson.course.teacher_id != teacher.id:
         raise PermissionDenied("Faqat o'qituvchi darsni tugata oladi.")
     lesson.status = Lesson.Status.FINISHED
     lesson.save(update_fields=['status'])
     lesson.attendances.filter(left_at__isnull=True).update(left_at=timezone.now())
+    # Doska lentasi -> PDF -> guruh chat (EduTech.docx). Xato yakunlashni to'xtatmaydi.
+    try:
+        from apps.board import services as board_services
+        board_services.publish_board_pdf(lesson)
+    except Exception:  # noqa: BLE001 — PDF muammosi dars yakunidan muhimroq emas
+        import logging
+        logging.getLogger('apps').exception('board pdf publish failed')
     audit.record(action='lesson.finish', actor=teacher, target=lesson, request=request)
     return lesson
 

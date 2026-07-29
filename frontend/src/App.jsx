@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { useAuth } from './auth/AuthContext'
 import Layout from './components/Layout'
+import BoardViewer from './pages/BoardViewer'
 import ChatPage from './pages/ChatPage'
 import LessonRoom from './pages/LessonRoom'
 import Login from './pages/Login'
@@ -49,6 +50,7 @@ export default function App() {
         <Route index element={<HomeByRole />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="panel" element={<PanelByRole />} />
+        <Route path="boards/:lessonId" element={<BoardViewer />} />
         <Route path="lessons/:lessonId/room" element={<LessonRoom />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
