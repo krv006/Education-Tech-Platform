@@ -2,13 +2,16 @@
 # Ishlatish: make <target>   (masalan: make fake)
 COMPOSE = docker compose -f docker-compose.prod.yml
 
-.PHONY: help deploy up down build logs ps fake superuser migrate shell dbshell
+.PHONY: help deploy remote up down build logs ps fake superuser migrate shell dbshell
 
 help:  ## Buyruqlar ro'yxati
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-deploy:  ## To'liq deploy: nginx stop, .env, build, up (bitta buyruq)
+deploy:  ## To'liq deploy: nginx stop, .env, build, up (serverda ishlatiladi)
 	bash scripts/deploy.sh
+
+remote:  ## Lokal kompyuterdan serverga deploy (ssh: pull + build + up)
+	bash scripts/deploy-remote.sh
 
 up:  ## Stack'ni ko'tarish (build bilan)
 	$(COMPOSE) up -d --build

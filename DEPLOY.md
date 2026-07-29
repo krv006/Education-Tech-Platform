@@ -48,9 +48,18 @@ Tekshirish: `https://edu.thesofmebel.uz` (SPA), `/admin/` (Django admin), `/api/
 
 ## 4. Yangilash
 
+Serverda:
+
 ```bash
 git pull
 docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Yoki lokal kompyuterdan bitta buyruq bilan (SSH kalit bir marta `ssh-copy-id root@75.119.154.71`
+bilan sozlangan bo'lishi kerak):
+
+```bash
+bash scripts/deploy-remote.sh
 ```
 
 Migratsiya va collectstatic har startda avtomatik bajariladi.
