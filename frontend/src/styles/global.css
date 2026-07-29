@@ -1086,6 +1086,7 @@ a {
   border-radius: 999px;
   cursor: pointer;
   transition: background 0.15s;
+  white-space: nowrap; /* "🖊 Doska" tor ekranda ikki qatorga bo'linmasin */
 }
 .room-ask-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.24); }
 .room-ask-btn:disabled { opacity: 0.7; cursor: default; }
@@ -1583,11 +1584,14 @@ a {
    rejimida virtual kenglik ~980px bo'ladi — faqat width sharti ushlamaydi) */
 @media (max-width: 640px), ((pointer: coarse) and (max-width: 1180px)) {
   :root {
-    /* Telefonda mayda shriftlar o'qish uchun bir poghona kattaroq */
-    --fs-2xs: 12px;
-    --fs-xs: 13px;
-    --fs-sm: 14px;
-    --fs-base: 15px;
+    /* Telefonda shriftlar sezilarli kattaroq — asosiy userlar bolalar,
+       mayda matnni o'qiy olmaydi */
+    --fs-2xs: 12.5px;
+    --fs-xs: 13.5px;
+    --fs-sm: 15px;
+    --fs-base: 16px;
+    --fs-md: 17.5px;
+    --fs-lg: 19px;
   }
 
   .app-header { padding: 0 14px; gap: 10px; }
@@ -1616,6 +1620,56 @@ a {
     grid-template-rows: minmax(0, 1fr) 96px;
   }
   .room-wrap .lk-carousel .lk-participant-tile { max-height: 96px; }
+
+  /* ── Bolalar uchun yirik interfeys: katta tugmalar, o'qiladigan matn ── */
+
+  /* Chat ro'yxati — Telegram mobil kabi baland qatorlar, katta avatar */
+  .chat-row { padding: 13px 14px; gap: 12px; }
+  .chat-avatar { width: 52px; height: 52px; font-size: 20px; }
+  .chat-row-body { gap: 4px; }
+  .chat-row-body .name { font-size: 16.5px; }
+  .chat-row-body .preview { font-size: 14.5px; }
+  .chat-row-body .time { font-size: 13px; }
+  .chat-row-body .unread { min-width: 24px; height: 24px; font-size: 13px; }
+  .chat-list-head { padding: 12px; gap: 8px; }
+  .tg-search { padding: 11px 16px; font-size: 16px; }
+  .tg-menu-btn { font-size: 22px; padding: 6px 10px; }
+  .chat-list-head .btn.sm { padding: 10px 16px; font-size: 17px; }
+  .live-banner { padding: 12px 12px 12px 14px; }
+
+  /* Chat oynasi — katta xabar matni va yuborish tugmasi */
+  .chat-messages { font-size: 15.5px; }
+  .chat-input { padding: 10px; gap: 8px; }
+  .chat-input .btn { padding: 12px 18px; }
+  .chat-back { font-size: 26px; padding: 4px 8px; }
+
+  /* Sarlavha paneli — bosiladigan narsalar barmoqqa mos */
+  .app-header { height: 58px; padding: 0 12px; }
+  .app-header .btn.sm,
+  .app-header button { min-height: 40px; }
+
+  /* Dars xonasi tepasi — Doska va so'rov tugmalari katta */
+  .room-topbar { gap: 10px; padding: 10px 12px; }
+  .room-topbar-title { font-size: 16.5px; }
+  .room-topbar-timer, .room-topbar-count { font-size: 14px; }
+  .room-ask-btn { font-size: 15px; padding: 11px 18px; font-weight: 700; }
+
+  /* LiveKit pastki boshqaruv — tugmalar kattaroq */
+  .room-wrap .lk-control-bar { gap: 10px; padding: 10px 8px; }
+  .room-wrap .lk-control-bar > .lk-button,
+  .room-wrap .lk-control-bar > .lk-button-group > .lk-button,
+  .room-wrap .lk-control-bar > .lk-disconnect-button {
+    width: 58px;
+    height: 58px;
+  }
+  .room-wrap .lk-control-bar > .lk-disconnect-button { width: 74px; }
+
+  /* Doska toolbar — rang va asbob tugmalari katta */
+  .board-toolbar { padding: 10px 12px; gap: 10px; }
+  .board-color { width: 30px; height: 30px; }
+  .board-tool { width: 42px; height: 42px; font-size: 19px; }
+  .board-tool.formula { font-size: 17px; }
+  .board-width { padding: 9px 10px; font-size: 15px; }
 }
 
 @media (max-width: 400px) {
