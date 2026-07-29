@@ -458,7 +458,7 @@ export default function ChatPage() {
               <b>{l.title}</b>
               <span>{l.course_title} · jonli efirda</span>
             </span>
-            <span className="lb-go">Kirish →</span>
+            <span className="lb-go">Kirish</span>
           </button>
         ))}
 
