@@ -234,7 +234,7 @@ a {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
-@media (max-width: 700px) {
+@media (max-width: 700px), ((pointer: coarse) and (max-width: 1180px)) {
   .grid-2 { grid-template-columns: 1fr; }
 }
 
@@ -919,7 +919,9 @@ a {
 .student-suggest-row .add { color: var(--indigo); font-weight: 700; font-size: 13px; }
 .chat-modal-card textarea.input { resize: vertical; }
 
-@media (max-width: 760px) {
+/* Telefon "Desktop site" rejimida ham (virtual ~980px, pointer: coarse)
+   chat bitta ustun bo'lishi shart — Telegram mobil kabi */
+@media (max-width: 760px), ((pointer: coarse) and (max-width: 1180px)) {
   .chat-page { grid-template-columns: 1fr; }
   .chat-page.thread-open .chat-list { display: none; }
   .chat-page:not(.thread-open) .chat-thread { display: none; }
@@ -1576,8 +1578,10 @@ a {
 }
 .room-lobby-back:hover { color: #fff; }
 
-/* ─── Mobil moslashuv ─── */
-@media (max-width: 640px) {
+/* ─── Mobil moslashuv ───
+   Shart ikki xil: tor ekran YOKI touch qurilma (telefon "Desktop site"
+   rejimida virtual kenglik ~980px bo'ladi — faqat width sharti ushlamaydi) */
+@media (max-width: 640px), ((pointer: coarse) and (max-width: 1180px)) {
   :root {
     /* Telefonda mayda shriftlar o'qish uchun bir poghona kattaroq */
     --fs-2xs: 12px;
@@ -1621,11 +1625,14 @@ a {
 
 /* ─── Mobil doska: asosiy userlar telefonda — doska katta, klaviatura bottom-sheet ───
    MUHIM: bu blok fayl OXIRIDA turishi shart — bazaviy .board-* qoidalaridan keyin,
-   aks holda bir xil spetsifiklikda bazaviy qoida ustun keladi. */
-@media (max-width: 640px) {
+   aks holda bir xil spetsifiklikda bazaviy qoida ustun keladi.
+   Shart ikki xil: tor ekran YOKI touch qurilma (telefon "Desktop site" rejimida
+   ~980px virtual kenglik beradi — width sharti ushlamaydi, pointer:coarse ushlaydi). */
+@media (max-width: 640px), ((pointer: coarse) and (max-width: 1180px)) {
   .board-toolbar { flex-wrap: wrap; row-gap: 6px; }
   /* Doska telefonda KATTA ko'rsatiladi — yon tomonga barmoq bilan surib
-     ko'riladi (pen/eraser'da emas), yozuv o'qiladigan bo'ladi */
+     ko'riladi (pen/eraser'da emas), yozuv o'qiladigan bo'ladi.
+     250vw — virtual kenglik qanday bo'lsa ham doska ~2.5 ekran bo'ladi */
   .board-ribbon {
     padding: 8px;
     gap: 12px;
@@ -1633,32 +1640,53 @@ a {
     justify-items: start;
     -webkit-overflow-scrolling: touch;
   }
-  .board-sheet { width: 960px; max-width: none; }
+  .board-sheet { width: max(960px, 250vw); max-width: none; }
   .board-sheet-label { font-size: 10px; margin-bottom: 2px; }
+  /* O'lchamlar vw asosida (clamp) — virtual 980px rejimda ham tugmalar
+     BARMOQQA MOS fizik kattalikda qoladi */
   .board-mathbar {
     left: 6px;
     right: 6px;
     bottom: 74px;
     transform: none;
     width: auto;
-    padding: 10px;
-    gap: 7px;
-    border-radius: 18px;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: clamp(8px, 1.6vw, 16px);
+    gap: clamp(6px, 1.2vw, 12px);
+    border-radius: clamp(16px, 2.4vw, 24px);
   }
   .mc-hint { display: none; } /* joy tor — yorliq faqat desktopda */
-  .mc-cancel { margin-left: auto; }
-  .mc-ctrl button { padding: 9px 0; font-size: 15px; }
+  .mc-cancel {
+    margin-left: auto;
+    font-size: clamp(11.5px, 1.9vw, 19px);
+    padding: clamp(7px, 1.2vw, 12px) clamp(12px, 2vw, 20px);
+  }
+  .mc-templates-btn { font-size: clamp(11.5px, 1.9vw, 19px); }
+  .mc-ctrl button { padding: clamp(8px, 1.5vw, 15px) 0; font-size: clamp(14px, 2.2vw, 22px); }
   .mc-tabs { justify-content: space-between; }
-  .mc-tabs button { padding: 5px 11px; font-size: 12px; flex: 1; text-align: center; }
-  .mc-grid { gap: 6px; }
-  .mc-grid button { padding: 12px 0; font-size: 16.5px; border-radius: 11px; }
-  .mc-grid button.fn { font-size: 13px; }
-  .mc-place { padding: 8px 14px; font-size: var(--fs-xs); }
+  .mc-tabs button {
+    padding: clamp(4px, 0.8vw, 8px) clamp(8px, 1.6vw, 16px);
+    font-size: clamp(11.5px, 1.8vw, 18px);
+    flex: 1;
+    text-align: center;
+  }
+  .mc-grid { gap: clamp(5px, 1vw, 10px); }
+  .mc-grid button {
+    padding: clamp(11px, 2vw, 20px) 0;
+    font-size: clamp(16px, 2.6vw, 26px);
+    border-radius: clamp(10px, 1.6vw, 16px);
+  }
+  .mc-grid button.fn { font-size: clamp(12.5px, 2vw, 20px); }
+  .mc-place {
+    padding: clamp(8px, 1.4vw, 14px) clamp(14px, 2.4vw, 24px);
+    font-size: clamp(12.5px, 2vw, 20px);
+  }
   .board-math-hint {
     bottom: 84px;
     width: max-content;
     max-width: calc(100% - 24px);
-    font-size: var(--fs-xs);
+    font-size: clamp(12.5px, 2vw, 20px);
     text-align: center;
   }
 }
