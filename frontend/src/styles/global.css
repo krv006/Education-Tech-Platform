@@ -594,13 +594,15 @@ a {
 .nav-link:hover { background: var(--line); }
 
 .chat-page {
+  /* To'liq ekran — Telegram Desktop kabi, header ostidan gacha */
+  position: fixed;
+  top: var(--header-h, 61px);
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: grid;
-  grid-template-columns: 340px 1fr;
-  height: calc(100dvh - 61px - 84px);
-  min-height: 420px;
+  grid-template-columns: minmax(300px, 380px) 1fr;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
   overflow: hidden;
 }
 .chat-list { border-right: 1px solid var(--line); overflow-y: auto; }
