@@ -15,6 +15,9 @@ const COLORS = ['#1c1e3a', '#e03131', '#1a9f6c', '#2b6be4', '#f59f00']
 const W = 1600
 const H = 900
 const TEXT_SIZE = 22 // doska birligida — canvas'dagi render bilan bir xil
+const LINE = TEXT_SIZE * 1.3 // bir qator balandligi (canvas render bilan bir xil)
+const MARGIN_X = 48  // yozuv doim qator boshidan — daftar chetidagi hoshiya
+const MARGIN_Y = 30  // birinchi qatorning tepadan joyi
 
 function drawStrokes(canvas, strokes, live) {
   const ctx = canvas.getContext('2d')
@@ -300,7 +303,9 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   function startMathEdit(sheetIndex, x, y, scale) {
     // boshqa joyga bosilsa — oldingi blok avval doskaga tushadi
     if (mathEdit) editorRef.current?.save()
-    setMathEdit({ sheetIndex, x, y, scale })
+    // Daftar uslubi: qayerga bosilmasin, yozuv o'sha QATORNING BOSHIDAN boshlanadi
+    const row = Math.max(0, Math.round((y - MARGIN_Y) / LINE))
+    setMathEdit({ sheetIndex, x: MARGIN_X, y: MARGIN_Y + row * LINE, scale })
     setShowTemplates(false)
   }
 
@@ -428,7 +433,7 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
           <div className="mc-bar-actions">
             <button className="mc-templates-btn" onClick={() => setShowTemplates((v) => !v)}>📚</button>
             <span className="mc-hint">o'zingiz yechasiz — javob berilmaydi</span>
-            <button className="btn secondary sm" onClick={() => setMathEdit(null)}>✕ Bekor</button>
+            <button className="mc-cancel" onClick={() => setMathEdit(null)}>✕ Bekor</button>
             <button className="mc-place" onClick={() => editorRef.current?.save()}>✓ Doskaga yozish</button>
           </div>
           {showTemplates && (
