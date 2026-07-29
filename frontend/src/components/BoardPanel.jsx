@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import api, { errMessage } from '../api/client'
+import MathCalc from './MathCalc'
 
 const COLORS = ['#1c1e3a', '#e03131', '#1a9f6c', '#2b6be4', '#f59f00']
 const W = 1600
@@ -139,11 +140,9 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
   const [error, setError] = useState('')
   const [eraseTarget, setEraseTarget] = useState(null) // {sheetIndex, stroke}
   const [eraseReason, setEraseReason] = useState('')
-  // ƒ Formula (Photomath uslubi): yozasiz -> tizim yechadi -> doskaga qo'yiladi
-  const [formulaOpen, setFormulaOpen] = useState(false)
-  const [formulaExpr, setFormulaExpr] = useState('')
-  const [solving, setSolving] = useState(false)
-  const [solution, setSolution] = useState(null) // {pretty, result, steps}
+  // 𝑓𝑥 Matematik doska (Photomath klaviaturasi) — o'quvchi o'zi yechadi,
+  // javob avtomatik chiqmaydi; yozgan ishi doskaga blok bo'lib tushadi
+  const [mathOpen, setMathOpen] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -192,37 +191,19 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
     } catch (e) { setError(errMessage(e)) }
   }
 
-  async function solveFormula() {
-    setSolving(true)
-    setSolution(null)
-    try {
-      const { data } = await api.post(`/board/${lessonId}/solve/`, { expr: formulaExpr })
-      setSolution(data)
-    } catch (e) { setError(errMessage(e)) }
-    setSolving(false)
-  }
-
-  async function placeFormula() {
-    // formula + javob + qadamlar bitta blok bo'lib oxirgi sheet'ga tushadi
-    const lines = [
-      solution.pretty,
-      '',
-      `Javob: ${solution.result}`,
-      ...solution.steps.map((s) => `• ${s}`),
-    ]
+  async function placeMathText(text) {
+    // o'quvchining yozgan ishi bitta blok bo'lib oxirgi sheet'ga tushadi
     const sheet = board.sheets[board.sheets.length - 1]
     const existingTexts = sheet.strokes.filter((s) => s.type === 'text').length
     const el = {
       type: 'text',
-      text: lines.join('\n'),
+      text,
       x: 60,
       y: 50 + (existingTexts % 4) * 200,
       size: 22,
       color,
     }
-    setFormulaOpen(false)
-    setFormulaExpr('')
-    setSolution(null)
+    setMathOpen(false)
     try {
       await api.post(`/board/${lessonId}/stroke/`, { sheet: sheet.index, stroke: el })
       load()
@@ -270,12 +251,12 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
               <option value={4}>O'rta</option>
               <option value={8}>Yo'g'on</option>
             </select>
-            {/* Fanga mos vosita: matematikada formula yechuvchi (EduTech.docx) */}
+            {/* Fanga mos vosita: matematikada Photomath uslubidagi klaviatura (EduTech.docx) */}
             {/matem|algebra|geometr|fizik/i.test(board.subject || '') && (
               <button
                 className="board-tool formula"
-                title="Formula yozing — tizim o'zi yechib doskaga qo'yadi"
-                onClick={() => setFormulaOpen(true)}
+                title="Matematik doska — barcha belgilar bilan o'zingiz yechasiz"
+                onClick={() => setMathOpen(true)}
               >ƒ𝑥</button>
             )}
           </>
@@ -310,43 +291,9 @@ export default function BoardPanel({ lessonId, onClose, readOnly = false, onRequ
         ))}
       </div>
 
-      {/* ƒ Formula — yozasiz, tizim yechadi (Photomath uslubi) */}
-      {formulaOpen && (
-        <div className="chat-modal" onClick={() => setFormulaOpen(false)}>
-          <div className="chat-modal-card formula-card" onClick={(e) => e.stopPropagation()}>
-            <h3>ƒ𝑥 Formula yechish</h3>
-            <p className="muted">
-              Yozing: <code>x^2 - 5x + 6 = 0</code> yoki <code>(x^2-9)/(x-3)</code> — tizim
-              o'zi yechadi va doskaga qo'yadi.
-            </p>
-            <div className="row">
-              <input
-                className="input"
-                placeholder="Masalan: 2x^2 + 3x - 5 = 0"
-                value={formulaExpr}
-                onChange={(e) => { setFormulaExpr(e.target.value); setSolution(null) }}
-                onKeyDown={(e) => { if (e.key === 'Enter' && formulaExpr.trim()) solveFormula() }}
-                autoFocus
-              />
-              <button className="btn sm" disabled={!formulaExpr.trim() || solving} onClick={solveFormula}>
-                {solving ? '…' : 'Yechish'}
-              </button>
-            </div>
-            {solution && (
-              <div className="formula-preview">
-                <pre>{solution.pretty}</pre>
-                <div className="answer">Javob: <b>{solution.result}</b></div>
-                {solution.steps.length > 0 && (
-                  <ul>
-                    {solution.steps.map((s, i) => <li key={i}>{s}</li>)}
-                  </ul>
-                )}
-                <button className="btn sm" onClick={placeFormula}>📌 Doskaga qo'yish</button>
-              </div>
-            )}
-            <button className="btn secondary sm" onClick={() => setFormulaOpen(false)}>Yopish</button>
-          </div>
-        </div>
+      {/* 𝑓𝑥 Matematik doska — Photomath klaviaturasi, javob berilmaydi */}
+      {mathOpen && (
+        <MathCalc onPlace={placeMathText} onClose={() => setMathOpen(false)} />
       )}
 
       {/* O'chirish sababi — majburiy */}

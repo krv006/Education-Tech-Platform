@@ -1188,23 +1188,152 @@ a {
   background: #1a9f6c;
 }
 .board-tool.formula:hover { background: #148257; }
-.formula-card { width: min(560px, 100%); }
-.formula-preview {
+/* ─── 𝑓𝑥 Matematik doska — Photomath uslubidagi klaviatura ─── */
+.mathcalc {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  width: min(440px, 100%);
+  max-height: min(92dvh, 760px);
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+.mc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mc-head b { font-size: var(--fs-md); font-style: italic; }
+.mc-hint { flex: 1; font-size: var(--fs-2xs); color: var(--muted); }
+.mc-templates-btn {
+  border: 1px solid var(--line2);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.mc-templates-btn:hover { background: var(--indigo-bg); }
+.mc-templates {
+  display: grid;
+  gap: 6px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 12px 14px;
-  display: grid;
-  gap: 8px;
+  padding: 8px;
   background: #f7f8fd;
+  max-height: 220px;
+  overflow-y: auto;
 }
-.formula-preview pre {
+.mc-template-row { display: flex; gap: 6px; }
+.mc-template-row .name {
+  flex: 1;
+  display: grid;
+  text-align: left;
+  gap: 2px;
+  border: none;
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.mc-template-row .name b { font-size: var(--fs-xs); }
+.mc-template-row .name span {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
   font-family: Consolas, 'Courier New', monospace;
-  font-size: 15px;
-  overflow-x: auto;
-  margin: 0;
 }
-.formula-preview .answer { font-size: 15px; color: #148257; }
-.formula-preview ul { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
+.mc-template-row .pin {
+  border: none;
+  background: var(--indigo-bg);
+  border-radius: 10px;
+  padding: 0 10px;
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mc-work {
+  width: 100%;
+  border: 2px solid var(--line2);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 19px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 96px;
+  color: var(--ink);
+}
+.mc-work:focus { outline: none; border-color: var(--indigo); }
+.mc-ctrl {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.mc-ctrl button {
+  border: none;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 0;
+  font-size: 15px;
+  cursor: pointer;
+}
+.mc-ctrl button.on { background: var(--indigo); }
+.mc-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+.mc-tabs button {
+  border: 1px solid var(--line2);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
+  font-style: italic;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mc-tabs button.on {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.mc-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.mc-grid button {
+  border: none;
+  background: #f0f1fa;
+  border-radius: 10px;
+  padding: 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--ink);
+}
+.mc-grid button:hover { background: var(--indigo-bg); }
+.mc-grid button.fn {
+  background: #e3e5f5;
+  font-size: 14px;
+  font-style: italic;
+}
+.mc-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.mc-place {
+  border: none;
+  background: #1a9f6c;
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: var(--fs-base);
+  font-weight: 700;
+  cursor: pointer;
+}
+.mc-place:hover { background: #148257; }
+.mc-place:disabled { opacity: 0.5; cursor: default; }
 .board-width {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
