@@ -21,7 +21,10 @@ export default function Layout() {
           <span>🎯</span>Fokus
         </Link>
         {(user.role === 'teacher' || user.role === 'student') && (
-          <Link to="/chat" className="nav-link">💬 Chat</Link>
+          <>
+            <Link to="/" className="nav-link">💬 Chatlar</Link>
+            <Link to="/panel" className="nav-link">📊 Panel</Link>
+          </>
         )}
         <div className="spacer" />
         <span className="badge indigo">{ROLE_LABELS[user.role] || user.role}</span>

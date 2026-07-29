@@ -19,9 +19,17 @@ function Protected({ children }) {
 
 function HomeByRole() {
   const { user } = useAuth()
-  if (user.role === 'teacher') return <TeacherHome />
+  // Telegram uslubi (EduTech.docx): o'qituvchi/o'quvchi uchun asosiy ekran — chatlar
+  if (user.role === 'teacher' || user.role === 'student') return <ChatPage />
   if (user.role === 'parent') return <ParentHome />
+  return <div className="card">Rol: {user.role} — bu panel hali tayyor emas.</div>
+}
+
+function PanelByRole() {
+  const { user } = useAuth()
+  if (user.role === 'teacher') return <TeacherHome />
   if (user.role === 'student') return <StudentHome />
+  if (user.role === 'parent') return <ParentHome />
   return <div className="card">Rol: {user.role} — bu panel hali tayyor emas.</div>
 }
 
@@ -40,6 +48,7 @@ export default function App() {
       >
         <Route index element={<HomeByRole />} />
         <Route path="chat" element={<ChatPage />} />
+        <Route path="panel" element={<PanelByRole />} />
         <Route path="lessons/:lessonId/room" element={<LessonRoom />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

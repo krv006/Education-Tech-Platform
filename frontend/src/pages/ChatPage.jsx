@@ -1,10 +1,12 @@
-// Telegram uslubidagi chat — chapda ro'yxat, o'ngda suhbat (EduTech.docx).
-// Real-time: polling (ro'yxat 8s, ochiq suhbat 3s).
+// Telegram uslubidagi asosiy ekran (EduTech.docx: "interfeys telegram asosida").
+// Chapda qidiruv + chatlar (har kurs = bitta guruh chat, 1 qatordan),
+// o'ngda suhbat; kurs chatida tablar: Chat | Darslar | O'quvchilar.
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import api, { errMessage } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { fmtTime, sameDay } from '../lib/ui'
+import { fmtTime, fmtWhen, LESSON_STATUS, sameDay } from '../lib/ui'
 
 function fmtChatTime(iso) {
   const d = new Date(iso)
@@ -12,23 +14,184 @@ function fmtChatTime(iso) {
   return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-function Avatar({ name, kind }) {
+function Avatar({ name, kind, size }) {
   const initial = (name || '?').trim()[0]?.toUpperCase() || '?'
-  return <div className={`chat-avatar ${kind === 'course' ? 'group' : ''}`}>{kind === 'course' ? '👥' : initial}</div>
+  return (
+    <div className={`chat-avatar ${kind === 'course' ? 'group' : ''}`} style={size ? { width: size, height: size } : undefined}>
+      {kind === 'course' ? '👥' : initial}
+    </div>
+  )
+}
+
+/** Kurs chatidagi "Darslar" tabi — dars ro'yxati + o'qituvchiga tez dars qo'shish. */
+function LessonsTab({ courseId, isTeacher }) {
+  const navigate = useNavigate()
+  const [lessons, setLessons] = useState(null)
+  const [form, setForm] = useState(null) // {title, starts_at, duration_min}
+  const [err, setErr] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get('/lessons/', { params: { course: courseId, page_size: 100 } })
+      const items = (data.results || data).sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at))
+      setLessons(items)
+    } catch (e) { setErr(errMessage(e)) }
+  }, [courseId])
+
+  useEffect(() => { load() }, [load])
+
+  async function createLesson(e) {
+    e.preventDefault()
+    try {
+      await api.post('/lessons/', {
+        course: courseId,
+        title: form.title,
+        starts_at: new Date(form.starts_at).toISOString(),
+        duration_min: Number(form.duration_min) || 45,
+      })
+      setForm(null)
+      load()
+    } catch (e2) { setErr(errMessage(e2)) }
+  }
+
+  return (
+    <div className="course-tab-body">
+      {err && <div className="error-box">{err}</div>}
+      {isTeacher && (
+        form ? (
+          <form className="tg-form" onSubmit={createLesson}>
+            <input className="input" placeholder="Dars mavzusi" required value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            <div className="row">
+              <input className="input" type="datetime-local" required value={form.starts_at}
+                onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
+              <input className="input" type="number" min="10" max="180" value={form.duration_min}
+                onChange={(e) => setForm({ ...form, duration_min: e.target.value })} style={{ width: 90 }} />
+            </div>
+            <div className="row">
+              <button className="btn sm" type="submit">Saqlash</button>
+              <button className="btn secondary sm" type="button" onClick={() => setForm(null)}>Bekor</button>
+            </div>
+          </form>
+        ) : (
+          <button className="btn sm" onClick={() => setForm({ title: '', starts_at: '', duration_min: 45 })}>
+            + Dars qo'shish
+          </button>
+        )
+      )}
+      {lessons === null && <p className="muted">Yuklanmoqda…</p>}
+      {lessons?.length === 0 && <p className="muted">Hali dars yo'q.</p>}
+      {lessons?.map((l) => {
+        const meta = LESSON_STATUS[l.status] || { label: l.status, badge: 'indigo', dot: 'indigo' }
+        const today = sameDay(new Date(l.starts_at), new Date())
+        return (
+          <div key={l.id} className={`lesson-line ${today ? 'today-row' : ''}`}>
+            <div className="info">
+              <div className="name">{l.title}</div>
+              <div className="meta">{fmtWhen(l.starts_at).rel} {fmtWhen(l.starts_at).abs} · {l.duration_min} daq</div>
+            </div>
+            <span className={`badge ${meta.badge}`}><span className={`dot ${meta.dot}`} />{meta.label}</span>
+            {['scheduled', 'live'].includes(l.status) && (
+              <button className="btn sm" onClick={() => navigate(`/lessons/${l.id}/room`)}>
+                {l.status === 'live' ? 'Kirish' : isTeacher ? 'Boshlash' : 'Kirish'}
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Kurs chatidagi "O'quvchilar" tabi (faqat o'qituvchi) — a'zolar + kutilayotgan so'rovlar. */
+function StudentsTab({ courseId }) {
+  const [students, setStudents] = useState(null)
+  const [pending, setPending] = useState([])
+  const [ref, setRef] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const [s, r] = await Promise.all([
+        api.get(`/courses/${courseId}/students/`),
+        api.get('/courses/requests/'),
+      ])
+      const all = s.data.results || s.data
+      setStudents(all.filter((e) => e.status === 'approved'))
+      setPending((r.data.results || r.data).filter((e) => e.course === courseId))
+    } catch (e) { setErr(errMessage(e)) }
+  }, [courseId])
+
+  useEffect(() => { load() }, [load])
+
+  async function respond(enrollmentId, action) {
+    try {
+      await api.post('/courses/requests/respond/', { enrollment_id: enrollmentId, action })
+      load()
+    } catch (e) { setErr(errMessage(e)) }
+  }
+
+  async function addStudent(e) {
+    e.preventDefault()
+    try {
+      await api.post(`/courses/${courseId}/enroll/`, { student: ref.trim() })
+      setRef('')
+      load()
+    } catch (e2) { setErr(errMessage(e2)) }
+  }
+
+  return (
+    <div className="course-tab-body">
+      {err && <div className="error-box">{err}</div>}
+      <form className="row" onSubmit={addStudent}>
+        <input className="input" placeholder="Login yoki taklif kodi (FK-XXXX)" value={ref}
+          onChange={(e) => setRef(e.target.value)} />
+        <button className="btn sm" type="submit" disabled={!ref.trim()}>+ Qo'shish</button>
+      </form>
+      {pending.map((p) => (
+        <div key={p.id} className="lesson-line" style={{ background: '#fff7e0' }}>
+          <div className="info">
+            <div className="name">{p.student.first_name || p.student.username}</div>
+            <div className="meta">Yozilish so'rovi kutilmoqda</div>
+          </div>
+          <button className="btn sm" onClick={() => respond(p.id, 'approve')}>Qabul</button>
+          <button className="btn secondary sm" onClick={() => respond(p.id, 'decline')}>Rad</button>
+        </div>
+      ))}
+      {students === null && <p className="muted">Yuklanmoqda…</p>}
+      {students?.length === 0 && pending.length === 0 && <p className="muted">Hali o'quvchi yo'q.</p>}
+      {students?.map((e) => (
+        <div key={e.id} className="lesson-line">
+          <Avatar name={e.student.first_name || e.student.username} size={36} />
+          <div className="info">
+            <div className="name">{e.student.first_name || e.student.username} {e.student.last_name}</div>
+            <div className="meta">@{e.student.username}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function ChatPage() {
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
   const [rooms, setRooms] = useState([])
-  const [active, setActive] = useState(null) // tanlangan room obyekti
+  const [active, setActive] = useState(null)
+  const [tab, setTab] = useState('chat') // kurs chatida: chat | lessons | students
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
+  const [search, setSearch] = useState('')
   const [error, setError] = useState('')
-  const [showNew, setShowNew] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [showNew, setShowNew] = useState(false)   // student: direct so'rov
   const [teachers, setTeachers] = useState([])
+  const [courseForm, setCourseForm] = useState(null) // teacher: yangi kurs
   const listRef = useRef(null)
   const activeRef = useRef(null)
   activeRef.current = active
+
+  const isTeacher = user.role === 'teacher'
 
   const loadRooms = useCallback(async () => {
     try {
@@ -43,7 +206,7 @@ export default function ChatPage() {
     return () => clearInterval(t)
   }, [loadRooms])
 
-  // Ochiq suhbat xabarlari — birinchi to'liq, keyin faqat yangilari
+  // Ochiq suhbat xabarlari — polling
   useEffect(() => {
     if (!active) return undefined
     let last = null
@@ -64,7 +227,7 @@ export default function ChatPage() {
         } else if (!params.after) {
           setMessages([])
         }
-      } catch { /* tarmoq uzilishi — keyingi poll'da qaytadi */ }
+      } catch { /* tarmoq — keyingi poll */ }
     }
     setMessages([])
     poll()
@@ -76,6 +239,11 @@ export default function ChatPage() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [messages])
 
+  function open(room) {
+    setActive(room)
+    setTab('chat')
+  }
+
   async function send(e) {
     e.preventDefault()
     const value = text.trim()
@@ -83,7 +251,7 @@ export default function ChatPage() {
     setText('')
     try {
       const { data } = await api.post(`/chat/rooms/${active.id}/send/`, { text: value })
-      setMessages((prev) => [...prev, data])
+      setMessages((prev) => (prev.some((m) => m.id === data.id) ? prev : [...prev, data]))
       loadRooms()
     } catch (err) { setError(errMessage(err)) }
   }
@@ -101,7 +269,7 @@ export default function ChatPage() {
       const { data } = await api.post('/chat/rooms/direct/request/', { teacher: teacher.username })
       setShowNew(false)
       await loadRooms()
-      setActive(data)
+      open(data)
     } catch (err) { setError(errMessage(err)) }
   }
 
@@ -113,26 +281,63 @@ export default function ChatPage() {
     } catch (err) { setError(errMessage(err)) }
   }
 
-  const isTeacher = user.role === 'teacher'
+  async function createCourse(e) {
+    e.preventDefault()
+    try {
+      await api.post('/courses/', courseForm)
+      setCourseForm(null)
+      loadRooms()
+    } catch (err) { setError(errMessage(err)) }
+  }
+
   const canWrite = active && (active.kind === 'course' || active.direct_status === 'active')
+  const filtered = rooms.filter((r) =>
+    r.title.toLowerCase().includes(search.trim().toLowerCase()),
+  )
 
   return (
-    <div className={`chat-page ${active ? 'thread-open' : ''}`}>
-      {/* ── Chap: chat ro'yxati ── */}
+    <div className={`chat-page tg ${active ? 'thread-open' : ''}`}>
+      {/* ── Chap: Telegram sidebar ── */}
       <aside className="chat-list">
         <div className="chat-list-head">
-          <b>💬 Chat</b>
-          {!isTeacher && (
-            <button className="btn sm" onClick={openNew}>+ Yangi</button>
-          )}
+          <button className="tg-menu-btn" onClick={() => setMenuOpen((v) => !v)}>☰</button>
+          <input
+            className="tg-search"
+            placeholder="Qidirish"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {isTeacher
+            ? <button className="btn sm" title="Yangi kurs (guruh)" onClick={() => setCourseForm({ title: '', subject: '', description: '' })}>+</button>
+            : <button className="btn sm" title="O'qituvchiga yozish" onClick={openNew}>+</button>}
         </div>
+
+        {menuOpen && (
+          <div className="tg-menu">
+            <div className="tg-menu-user">
+              <Avatar name={user.first_name || user.username} size={40} />
+              <div>
+                <b>{user.first_name || user.username}</b>
+                <div className="muted" style={{ fontSize: 12 }}>@{user.username}</div>
+              </div>
+            </div>
+            <button onClick={() => { setMenuOpen(false); navigate('/panel') }}>📊 Boshqaruv paneli</button>
+            {user.invite_code && (
+              <button onClick={() => navigator.clipboard?.writeText(user.invite_code)}>
+                🎟 Taklif kodim: {user.invite_code}
+              </button>
+            )}
+            <button onClick={() => { logout(); navigate('/login') }}>🚪 Chiqish</button>
+          </div>
+        )}
+
         {error && <div className="error-box" style={{ margin: 10 }}>{error}</div>}
-        {rooms.length === 0 && <p className="muted" style={{ padding: 16 }}>Hozircha chat yo'q.</p>}
-        {rooms.map((r) => (
+        {filtered.length === 0 && <p className="muted" style={{ padding: 16 }}>Chat topilmadi.</p>}
+        {filtered.map((r) => (
           <button
             key={r.id}
             className={`chat-row ${active?.id === r.id ? 'active' : ''}`}
-            onClick={() => setActive(r)}
+            onClick={() => open(r)}
           >
             <Avatar name={r.title} kind={r.kind} />
             <div className="chat-row-body">
@@ -142,12 +347,12 @@ export default function ChatPage() {
               </div>
               <div className="bottom">
                 <span className="preview">
-                  {r.kind === 'direct' && r.direct_status === 'pending' && '⏳ So\'rov kutilmoqda'}
+                  {r.kind === 'direct' && r.direct_status === 'pending' && "⏳ So'rov kutilmoqda"}
                   {r.kind === 'direct' && r.direct_status === 'blocked' && '🚫 Bloklangan'}
                   {(r.kind === 'course' || r.direct_status === 'active') && (
                     r.last_message
                       ? <>{r.last_message.sender}: {r.last_message.text}</>
-                      : 'Xabarlar yo\'q'
+                      : r.kind === 'course' ? 'Kurs guruhi' : "Xabarlar yo'q"
                   )}
                 </span>
                 {r.unread > 0 && <span className="unread">{r.unread}</span>}
@@ -157,10 +362,12 @@ export default function ChatPage() {
         ))}
       </aside>
 
-      {/* ── O'ng: suhbat ── */}
+      {/* ── O'ng: suhbat / kurs ── */}
       <section className="chat-thread">
         {!active ? (
-          <div className="chat-empty">Suhbatni tanlang</div>
+          <div className="chat-empty">
+            <div className="tg-empty-pill">Suhbatni tanlang</div>
+          </div>
         ) : (
           <>
             <div className="chat-thread-head">
@@ -169,13 +376,24 @@ export default function ChatPage() {
               <div className="info">
                 <b>{active.title}</b>
                 <span className="muted">
-                  {active.kind === 'course' ? 'Kurs guruhi' : "Shaxsiy suhbat"}
+                  {active.kind === 'course' ? 'Kurs guruhi' : 'Shaxsiy suhbat'}
                 </span>
               </div>
               {isTeacher && active.kind === 'direct' && active.direct_status === 'active' && (
                 <button className="btn secondary sm" onClick={() => respond(active, 'block')}>🚫 Block</button>
               )}
             </div>
+
+            {/* Kurs chatida tablar */}
+            {active.kind === 'course' && (
+              <div className="tg-tabs">
+                <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>💬 Chat</button>
+                <button className={tab === 'lessons' ? 'on' : ''} onClick={() => setTab('lessons')}>📅 Darslar</button>
+                {isTeacher && (
+                  <button className={tab === 'students' ? 'on' : ''} onClick={() => setTab('students')}>👥 O'quvchilar</button>
+                )}
+              </div>
+            )}
 
             {isTeacher && active.kind === 'direct' && active.direct_status === 'pending' && (
               <div className="chat-request-bar">
@@ -185,49 +403,60 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div className="chat-messages" ref={listRef}>
-              {messages.map((m, i) => {
-                const mine = m.sender.id === user.id
-                const prev = messages[i - 1]
-                const showName = !mine && active.kind === 'course'
-                  && (!prev || prev.sender.id !== m.sender.id)
-                return (
-                  <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
-                    <div className="bubble">
-                      {showName && <div className="sender">{m.sender.first_name || m.sender.username}</div>}
-                      <span className="text">{m.text}</span>
-                      <span className="stamp">{fmtTime(new Date(m.created_at))}</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            {active.kind === 'course' && tab === 'lessons' && (
+              <LessonsTab courseId={active.course} isTeacher={isTeacher} />
+            )}
+            {active.kind === 'course' && tab === 'students' && isTeacher && (
+              <StudentsTab courseId={active.course} />
+            )}
 
-            {canWrite ? (
-              <form className="chat-input" onSubmit={send}>
-                <input
-                  className="input"
-                  placeholder="Xabar yozing…"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                />
-                <button className="btn" type="submit" disabled={!text.trim()}>➤</button>
-              </form>
-            ) : (
-              <div className="chat-locked">
-                {active.direct_status === 'pending' && !isTeacher && "⏳ So'rov yuborilgan — o'qituvchi javobini kuting."}
-                {active.direct_status === 'pending' && isTeacher && "So'rovga javob bering."}
-                {active.direct_status === 'blocked' && (isTeacher
-                  ? <button className="btn sm" onClick={() => respond(active, 'accept')}>Blokdan chiqarish</button>
-                  : <button className="btn sm" onClick={() => requestDirect({ username: active.other_user?.username })}>Qayta so'rov yuborish</button>
+            {(active.kind !== 'course' || tab === 'chat') && (
+              <>
+                <div className="chat-messages" ref={listRef}>
+                  {messages.map((m, i) => {
+                    const mine = m.sender.id === user.id
+                    const prev = messages[i - 1]
+                    const showName = !mine && active.kind === 'course'
+                      && (!prev || prev.sender.id !== m.sender.id)
+                    return (
+                      <div key={m.id} className={`bubble-row ${mine ? 'mine' : ''}`}>
+                        <div className="bubble">
+                          {showName && <div className="sender">{m.sender.first_name || m.sender.username}</div>}
+                          <span className="text">{m.text}</span>
+                          <span className="stamp">{fmtTime(new Date(m.created_at))}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {canWrite ? (
+                  <form className="chat-input" onSubmit={send}>
+                    <input
+                      className="input"
+                      placeholder="Xabar yozing…"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                    />
+                    <button className="btn" type="submit" disabled={!text.trim()}>➤</button>
+                  </form>
+                ) : (
+                  <div className="chat-locked">
+                    {active.direct_status === 'pending' && !isTeacher && "⏳ So'rov yuborilgan — o'qituvchi javobini kuting."}
+                    {active.direct_status === 'pending' && isTeacher && "So'rovga javob bering."}
+                    {active.direct_status === 'blocked' && (isTeacher
+                      ? <button className="btn sm" onClick={() => respond(active, 'accept')}>Blokdan chiqarish</button>
+                      : <button className="btn sm" onClick={() => requestDirect({ username: active.other_user?.username })}>Qayta so'rov yuborish</button>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </>
         )}
       </section>
 
-      {/* ── Yangi direct so'rov (o'quvchi) ── */}
+      {/* ── Student: yangi direct so'rov ── */}
       {showNew && (
         <div className="chat-modal" onClick={() => setShowNew(false)}>
           <div className="chat-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -247,6 +476,26 @@ export default function ChatPage() {
             ))}
             <button className="btn secondary sm" onClick={() => setShowNew(false)}>Yopish</button>
           </div>
+        </div>
+      )}
+
+      {/* ── Teacher: yangi kurs (guruh) ── */}
+      {courseForm && (
+        <div className="chat-modal" onClick={() => setCourseForm(null)}>
+          <form className="chat-modal-card" onClick={(e) => e.stopPropagation()} onSubmit={createCourse}>
+            <h3>Yangi kurs — guruh chat</h3>
+            <p className="muted">Kurs yaratilganda avtomatik guruh chati ochiladi.</p>
+            <input className="input" placeholder="Kurs nomi" required value={courseForm.title}
+              onChange={(e) => setCourseForm({ ...courseForm, title: e.target.value })} />
+            <input className="input" placeholder="Fan (masalan: Matematika)" value={courseForm.subject}
+              onChange={(e) => setCourseForm({ ...courseForm, subject: e.target.value })} />
+            <textarea className="input" placeholder="Tavsif" rows={3} value={courseForm.description}
+              onChange={(e) => setCourseForm({ ...courseForm, description: e.target.value })} />
+            <div className="row">
+              <button className="btn sm" type="submit">Yaratish</button>
+              <button className="btn secondary sm" type="button" onClick={() => setCourseForm(null)}>Bekor</button>
+            </div>
+          </form>
         </div>
       )}
     </div>

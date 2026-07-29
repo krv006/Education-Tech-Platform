@@ -773,6 +773,89 @@ a {
 }
 .chat-teacher-row .name { flex: 1; font-weight: 600; font-size: 14px; }
 
+/* Telegram-shell qo'shimchalari */
+.tg-menu-btn {
+  border: none;
+  background: none;
+  font-size: 19px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.tg-menu-btn:hover { background: var(--line); }
+.tg-search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: #eef0f8;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 14px;
+  outline: none;
+}
+.tg-search:focus { background: #e6e9f6; }
+.chat-page.tg .chat-list-head { gap: 8px; }
+.tg-menu {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  display: grid;
+}
+.tg-menu-user {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.tg-menu > button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 11px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.tg-menu > button:hover { background: var(--indigo-bg); }
+.tg-empty-pill {
+  background: rgba(20, 22, 60, 0.35);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 13px;
+}
+.tg-tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.tg-tabs button {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 10px 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2.5px solid transparent;
+}
+.tg-tabs button.on { color: var(--indigo); border-bottom-color: var(--indigo); }
+.tg-tabs button:hover { background: var(--indigo-bg); }
+.course-tab-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  background: var(--surface);
+}
+.course-tab-body .lesson-line { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.tg-form { display: grid; gap: 8px; }
+.chat-modal-card textarea.input { resize: vertical; }
+
 @media (max-width: 760px) {
   .chat-page { grid-template-columns: 1fr; }
   .chat-page.thread-open .chat-list { display: none; }
