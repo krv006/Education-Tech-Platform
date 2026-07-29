@@ -142,7 +142,9 @@ const InlineMathEditor = forwardRef(function InlineMathEditor(
     },
   }), [onSave, onCancel])
 
-  const fontPx = TEXT_SIZE * scale
+  // Telefonda canvas kichik — shrift 6-7px bo'lib o'qib bo'lmay qoladi.
+  // Yozish payti kamida 14px ko'rsatamiz (doskaga baribir TEXT_SIZE da tushadi).
+  const fontPx = Math.max(TEXT_SIZE * scale, 14)
   return (
     <textarea
       ref={taRef}
