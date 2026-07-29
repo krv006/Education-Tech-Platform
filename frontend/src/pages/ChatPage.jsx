@@ -33,11 +33,40 @@ function Avatar({ name, kind, size }) {
   )
 }
 
+/** Tugagan dars davomati — Darslar tabida ochiladi (panel o'rnini bosadi). */
+function AttendanceMini({ lessonId }) {
+  const [rows, setRows] = useState(null)
+
+  useEffect(() => {
+    api.get('/attendance/', { params: { lesson: lessonId } })
+      .then((r) => setRows(r.data.results || r.data))
+      .catch(() => setRows([]))
+  }, [lessonId])
+
+  if (rows === null) return <p className="muted" style={{ padding: '4px 8px' }}>Yuklanmoqda…</p>
+  if (rows.length === 0) return <p className="muted" style={{ padding: '4px 8px' }}>Davomat yozuvi yo'q.</p>
+  return (
+    <div className="att-mini">
+      {rows.map((a) => (
+        <div key={a.id} className="att-mini-row">
+          <span className="who">{a.student.first_name || a.student.username}</span>
+          <span title="Darsda bo'lgan vaqt">⏱ {a.minutes ?? '—'} daq</span>
+          <span title="Diqqat tekshiruvi: javob/jami">👀 {a.attention_answered}/{a.attention_total}</span>
+          <span title="Dars oynasidan chiqishlar" className={a.focus_exits > 2 ? 'warn' : ''}>
+            🚪 {a.focus_exits}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Kurs chatidagi "Darslar" tabi — dars ro'yxati + o'qituvchiga tez dars qo'shish. */
 function LessonsTab({ courseId, isTeacher }) {
   const navigate = useNavigate()
   const [lessons, setLessons] = useState(null)
   const [form, setForm] = useState(null) // {title, starts_at, duration_min}
+  const [openAtt, setOpenAtt] = useState(null) // davomat ochilgan dars id
   const [err, setErr] = useState('')
 
   const load = useCallback(async () => {
@@ -95,17 +124,29 @@ function LessonsTab({ courseId, isTeacher }) {
         const meta = LESSON_STATUS[l.status] || { label: l.status, badge: 'indigo', dot: 'indigo' }
         const today = sameDay(new Date(l.starts_at), new Date())
         return (
-          <div key={l.id} className={`lesson-line ${today ? 'today-row' : ''}`}>
-            <div className="info">
-              <div className="name">{l.title}</div>
-              <div className="meta">{fmtWhen(l.starts_at).rel} {fmtWhen(l.starts_at).abs} · {l.duration_min} daq</div>
+          <div key={l.id}>
+            <div className={`lesson-line ${today ? 'today-row' : ''}`}>
+              <div className="info">
+                <div className="name">{l.title}</div>
+                <div className="meta">{fmtWhen(l.starts_at).rel} {fmtWhen(l.starts_at).abs} · {l.duration_min} daq</div>
+              </div>
+              <span className={`badge ${meta.badge}`}><span className={`dot ${meta.dot}`} />{meta.label}</span>
+              {l.status === 'finished' && (
+                <button
+                  className="btn secondary sm"
+                  title="Davomat va diqqat hisoboti"
+                  onClick={() => setOpenAtt((v) => (v === l.id ? null : l.id))}
+                >
+                  📊
+                </button>
+              )}
+              {['scheduled', 'live'].includes(l.status) && (
+                <button className="btn sm" onClick={() => navigate(`/lessons/${l.id}/room`)}>
+                  {l.status === 'live' ? 'Kirish' : isTeacher ? 'Boshlash' : 'Kirish'}
+                </button>
+              )}
             </div>
-            <span className={`badge ${meta.badge}`}><span className={`dot ${meta.dot}`} />{meta.label}</span>
-            {['scheduled', 'live'].includes(l.status) && (
-              <button className="btn sm" onClick={() => navigate(`/lessons/${l.id}/room`)}>
-                {l.status === 'live' ? 'Kirish' : isTeacher ? 'Boshlash' : 'Kirish'}
-              </button>
-            )}
+            {openAtt === l.id && <AttendanceMini lessonId={l.id} />}
           </div>
         )
       })}
@@ -236,8 +277,10 @@ export default function ChatPage() {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [showNew, setShowNew] = useState(false)   // student: direct so'rov
+  const [showNew, setShowNew] = useState(false)   // student: direct so'rov + katalog
   const [teachers, setTeachers] = useState([])
+  const [catalog, setCatalog] = useState([])
+  const [liveLessons, setLiveLessons] = useState([]) // jonli efir banneri
   const [courseForm, setCourseForm] = useState(null) // teacher: yangi kurs
   const listRef = useRef(null)
   const activeRef = useRef(null)
@@ -257,6 +300,19 @@ export default function ChatPage() {
     const t = setInterval(loadRooms, 8000)
     return () => clearInterval(t)
   }, [loadRooms])
+
+  // Jonli efir banneri — Zoom qismi: hozir ketayotgan darslar doim ko'z oldida
+  useEffect(() => {
+    async function loadLive() {
+      try {
+        const { data } = await api.get('/lessons/', { params: { status: 'live' } })
+        setLiveLessons(data.results || data)
+      } catch { /* keyingi poll */ }
+    }
+    loadLive()
+    const t = setInterval(loadLive, 15000)
+    return () => clearInterval(t)
+  }, [])
 
   // Ochiq suhbat xabarlari — polling
   useEffect(() => {
@@ -311,8 +367,20 @@ export default function ChatPage() {
   async function openNew() {
     setShowNew(true)
     try {
-      const { data } = await api.get('/chat/rooms/teachers/')
-      setTeachers(data)
+      const [t, c] = await Promise.all([
+        api.get('/chat/rooms/teachers/'),
+        api.get('/courses/catalog/'),
+      ])
+      setTeachers(t.data)
+      setCatalog(c.data.results || c.data)
+    } catch (err) { setError(errMessage(err)) }
+  }
+
+  async function enrollCourse(course) {
+    try {
+      await api.post(`/courses/${course.id}/enroll/`, {})
+      const { data } = await api.get('/courses/catalog/')
+      setCatalog(data.results || data)
     } catch (err) { setError(errMessage(err)) }
   }
 
@@ -373,7 +441,6 @@ export default function ChatPage() {
                 <div className="muted" style={{ fontSize: 12 }}>@{user.username}</div>
               </div>
             </div>
-            <button onClick={() => { setMenuOpen(false); navigate('/panel') }}>📊 Boshqaruv paneli</button>
             {user.invite_code && (
               <button onClick={() => navigator.clipboard?.writeText(user.invite_code)}>
                 🎟 Taklif kodim: {user.invite_code}
@@ -382,6 +449,18 @@ export default function ChatPage() {
             <button onClick={() => { logout(); navigate('/login') }}>🚪 Chiqish</button>
           </div>
         )}
+
+        {/* Jonli efir — Zoom kirish nuqtasi */}
+        {liveLessons.map((l) => (
+          <button key={l.id} className="live-banner" onClick={() => navigate(`/lessons/${l.id}/room`)}>
+            <span className="live-dot" />
+            <span className="lb-body">
+              <b>{l.title}</b>
+              <span>{l.course_title} · jonli efirda</span>
+            </span>
+            <span className="lb-go">Kirish →</span>
+          </button>
+        ))}
 
         {error && <div className="error-box" style={{ margin: 10 }}>{error}</div>}
         {filtered.length === 0 && <p className="muted" style={{ padding: 16 }}>Chat topilmadi.</p>}
@@ -508,7 +587,7 @@ export default function ChatPage() {
         )}
       </section>
 
-      {/* ── Student: yangi direct so'rov ── */}
+      {/* ── Student: yangi direct so'rov + kurs katalogi ── */}
       {showNew && (
         <div className="chat-modal" onClick={() => setShowNew(false)}>
           <div className="chat-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -523,6 +602,26 @@ export default function ChatPage() {
                 {t.direct_status === 'pending' && <span className="badge amber">Kutilmoqda</span>}
                 {(t.direct_status === null || t.direct_status === 'blocked') && (
                   <button className="btn sm" onClick={() => requestDirect(t)}>So'rov yuborish</button>
+                )}
+              </div>
+            ))}
+
+            <h3 style={{ marginTop: 8 }}>Kurslarga yozilish</h3>
+            <p className="muted">So'rov o'qituvchi tasdig'idan keyin guruh chat ochiladi.</p>
+            {catalog.length === 0 && <p className="muted">Ochiq kurslar yo'q.</p>}
+            {catalog.map((c) => (
+              <div key={c.id} className="chat-teacher-row">
+                <Avatar name={c.title} kind="course" />
+                <span className="name">
+                  {c.title}
+                  <span className="muted" style={{ display: 'block', fontSize: 12, fontWeight: 400 }}>
+                    {c.teacher.first_name || c.teacher.username} · {c.student_count} o'quvchi
+                  </span>
+                </span>
+                {c.my_status === 'approved' && <span className="badge green">A'zoman</span>}
+                {c.my_status === 'pending' && <span className="badge amber">Kutilmoqda</span>}
+                {(c.my_status === null || c.my_status === 'declined') && (
+                  <button className="btn sm" onClick={() => enrollCourse(c)}>Yozilish</button>
                 )}
               </div>
             ))}
