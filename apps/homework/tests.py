@@ -1,0 +1,242 @@
+"""Uy vazifasi oqimi testlari — AI chaqiruvi mock qilinadi.
+
+Qamrov: vazifa berish (faqat o'z kursiga), topshirish (yozilganlar, fayl
+validatsiyasi), AI natijaning saqlanishi, xatoda status=error, ko'rish
+huquqlari (o'quvchi/o'qituvchi/ota-ona/begona), qayta tekshirish, fan
+aniqlash va JSON validatsiya birliklari.
+"""
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
+from rest_framework.test import APIClient
+
+from apps.accounts.models import ParentChildLink, User
+from apps.lessons.models import Course, Enrollment
+
+from . import ai
+from .models import Submission
+
+FAKE_RESULT = {
+    'overall_score': 78,
+    'grade': 'Yaxshi',
+    'questions': [{
+        'question_number': 1,
+        'question': '2x + 3 = 7 tenglamani yeching',
+        'student_answer': 'x = 2',
+        'expected_solution': 'x = 2',
+        'analysis': "To'g'ri yechilgan.",
+        'mistakes': [],
+        'error_categories': [],
+        'correct_answer': 'x = 2',
+        'suggestions': [],
+        'difficulty': 'Easy',
+        'score': 100,
+    }],
+    'summary': {
+        'strengths': ['Tenglama yechish'],
+        'weaknesses': [],
+        'topics_to_review': [],
+        'recommendations': [],
+    },
+}
+
+
+def make(username, role):
+    u = User(username=username, role=role)
+    u.set_password('x')
+    u.save()
+    return u
+
+
+def pdf_upload(name='vazifa.pdf'):
+    return SimpleUploadedFile(name, b'%PDF-1.4 fake homework', content_type='application/pdf')
+
+
+@override_settings(HOMEWORK_CHECK_ASYNC=False)
+class HomeworkTests(TestCase):
+    def setUp(self):
+        self.teacher = make('t1', User.Role.TEACHER)
+        self.other_teacher = make('t2', User.Role.TEACHER)
+        self.student = make('s1', User.Role.STUDENT)
+        self.stranger = make('s2', User.Role.STUDENT)
+        self.parent = make('p1', User.Role.PARENT)
+        ParentChildLink.objects.create(
+            parent=self.parent, student=self.student,
+            status=ParentChildLink.Status.APPROVED,
+        )
+        self.course = Course.objects.create(
+            teacher=self.teacher, title='Algebra · 7-sinf', subject='Matematika',
+        )
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.client = APIClient()
+
+    def api(self, user):
+        self.client.force_authenticate(user)
+        return self.client
+
+    def create_assignment(self, **extra):
+        payload = {'course_id': str(self.course.id), 'title': 'Kvadrat tenglamalar', **extra}
+        return self.api(self.teacher).post('/api/v1/homework/assignments/', payload, format='json')
+
+    # ── vazifa berish ──
+    def test_teacher_creates_assignment(self):
+        r = self.create_assignment()
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['subject'], 'Matematika')
+
+    def test_only_own_course(self):
+        r = self.api(self.other_teacher).post('/api/v1/homework/assignments/', {
+            'course_id': str(self.course.id), 'title': 'X',
+        }, format='json')
+        self.assertEqual(r.status_code, 403)
+
+    def test_student_cannot_create(self):
+        r = self.api(self.student).post('/api/v1/homework/assignments/', {
+            'course_id': str(self.course.id), 'title': 'X',
+        }, format='json')
+        self.assertEqual(r.status_code, 403)
+
+    def test_bad_skill_key_rejected(self):
+        r = self.create_assignment(skill_key='talking')
+        self.assertEqual(r.status_code, 400)
+
+    # ── topshirish + AI ──
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_submit_runs_check_and_saves_result(self, mock_grade):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['status'], 'done')
+        self.assertEqual(r.data['overall_score'], 78)
+        self.assertEqual(r.data['grade'], 'Yaxshi')
+        # AI'ga fan konteksti to'g'ri uzatilgan
+        _, kwargs = mock_grade.call_args
+        self.assertEqual(kwargs['subject_text'], 'Matematika')
+        # natija to'liq saqlangan
+        sub = Submission.objects.get(pk=r.data['id'])
+        self.assertEqual(sub.result['questions'][0]['score'], 100)
+
+    @patch('apps.homework.services.ai.grade_file', side_effect=ai.HomeworkAIError('kvota tugadi'))
+    def test_ai_error_sets_error_status(self, _):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['status'], 'error')
+        self.assertIn('kvota', r.data['error'])
+
+    def test_stranger_cannot_submit(self):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.stranger).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_unsupported_extension_rejected(self):
+        a_id = self.create_assignment().data['id']
+        bad = SimpleUploadedFile('virus.exe', b'MZ', content_type='application/octet-stream')
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': bad},
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_audio_only_for_speaking(self):
+        a_id = self.create_assignment().data['id']  # skill_key yo'q — oddiy fan
+        audio = SimpleUploadedFile('javob.mp3', b'ID3 fake', content_type='audio/mpeg')
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': audio},
+        )
+        self.assertEqual(r.status_code, 400)
+
+    # ── ko'rish huquqlari ──
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_view_permissions(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        # o'quvchi, o'qituvchi, ota-ona ko'radi
+        for user in (self.student, self.teacher, self.parent):
+            r = self.api(user).get(f'/api/v1/homework/submissions/{sub_id}/')
+            self.assertEqual(r.status_code, 200, user.username)
+            self.assertEqual(r.data['result']['overall_score'], 78)
+
+        # begona o'quvchi va boshqa o'qituvchi ko'rmaydi
+        for user in (self.stranger, self.other_teacher):
+            r = self.api(user).get(f'/api/v1/homework/submissions/{sub_id}/')
+            self.assertEqual(r.status_code, 403, user.username)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_assignment_detail_scopes_submissions(self, _):
+        a_id = self.create_assignment().data['id']
+        self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        # o'qituvchi hamma topshiriqni ko'radi
+        r = self.api(self.teacher).get(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(len(r.data['submissions']), 1)
+        # o'quvchi faqat o'zinikini
+        r = self.api(self.student).get(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(len(r.data['submissions']), 1)
+        self.assertEqual(r.data['submissions'][0]['student_id'], str(self.student.id))
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_recheck_teacher_only(self, mock_grade):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+        r = self.api(self.student).post(f'/api/v1/homework/submissions/{sub_id}/recheck/')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.teacher).post(f'/api/v1/homework/submissions/{sub_id}/recheck/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(mock_grade.call_count, 2)
+
+    def test_list_requires_course_access(self):
+        self.create_assignment()
+        r = self.api(self.stranger).get(f'/api/v1/homework/assignments/?course={self.course.id}')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.student).get(f'/api/v1/homework/assignments/?course={self.course.id}')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data), 1)
+        self.assertIsNone(r.data[0]['my_submission'])
+
+
+class AiUnitTests(TestCase):
+    def test_detect_profile(self):
+        self.assertEqual(ai.detect_profile('Matematika'), ('math', '', ''))
+        self.assertEqual(ai.detect_profile('Fizika'), ('physics', '', ''))
+        self.assertEqual(ai.detect_profile('Ingliz tili'), ('general', '', 'english'))
+        self.assertEqual(ai.detect_profile('Geografiya'), ('general', 'Geografiya', ''))
+
+    def test_grade_label(self):
+        self.assertEqual(ai.grade_label(95), "A'lo")
+        self.assertEqual(ai.grade_label(78), 'Yaxshi')
+        self.assertEqual(ai.grade_label(10), 'Jiddiy yaxshilash kerak')
+
+    def test_parse_valid_json_with_fences(self):
+        import json
+        raw = '```json\n' + json.dumps(FAKE_RESULT) + '\n```'
+        self.assertEqual(ai.parse_and_validate_json(raw)['overall_score'], 78)
+
+    def test_parse_rejects_missing_keys(self):
+        with self.assertRaises(ai.InvalidModelResponseError):
+            ai.parse_and_validate_json('{"overall_score": 5}')
+        with self.assertRaises(ai.InvalidModelResponseError):
+            ai.parse_and_validate_json('bu json emas')
+
+    def test_system_prompt_modes(self):
+        p = ai.build_system_prompt('math')
+        self.assertIn('Mathematics teacher', p)
+        self.assertIn('UZBEK', p)
+        p = ai.build_system_prompt('general', language_key='english', skill_key='speaking')
+        self.assertIn('AUDIO RECORDING', p)
+        p = ai.build_system_prompt('general', custom_name='Geografiya')
+        self.assertIn('Geografiya', p)

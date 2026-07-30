@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'apps.live',
     'apps.chat',
     'apps.board',
+    'apps.homework',
 ]
 
 MIDDLEWARE = [
@@ -130,6 +131,12 @@ CORS_ALLOWED_ORIGINS = os.getenv(
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', 'devkey')
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', 'devsecret_change_me_32chars_min!')
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', 'ws://localhost:7880')
+
+# Uy vazifasi AI tekshiruvi (Gemini) — apps/homework
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash')
+# Tekshiruv fonda (thread) yuradi; testlar False qilib sinxron ishlatadi
+HOMEWORK_CHECK_ASYNC = True
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = os.getenv('TIME_ZONE', 'Asia/Tashkent')
