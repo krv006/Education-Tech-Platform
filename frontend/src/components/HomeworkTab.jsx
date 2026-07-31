@@ -1,13 +1,15 @@
 // Uy vazifasi tabi — kurs guruh chatida (EduTech.docx + AI-home-checker).
-// O'qituvchi: vazifa beradi, hamma topshiriqlar va AI natijalarini ko'radi.
-// O'quvchi: fayl yuklaydi (PDF/rasm/DOCX, Speaking'da audio) — Gemini savolma-
-// savol o'zbekcha tekshiradi. Natija: ball, baho, xatolar, tavsiyalar.
+// O'qituvchi: vazifani rich editor'da yozadi va/yoki Word/PDF/rasm biriktiradi,
+// muddat qo'yadi, hamma topshiriqlar + statistika + AI natijalarini ko'radi.
+// O'quvchi: kamera / galereya / fayl orqali topshiradi — Gemini savolma-savol
+// o'zbekcha tekshiradi. Natija: ball, baho, xatolar, tavsiyalar.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import api, { errMessage } from '../api/client'
+import RichEditor from './RichEditor'
 
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx'
-const ACCEPT_AUDIO = `${ACCEPT},.mp3,.wav,.m4a,.ogg`
+const FILE_ACCEPT = '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp'
+const AUDIO_ACCEPT = '.mp3,.wav,.m4a,.ogg'
 
 const SKILLS = [
   ['', 'Oddiy fan (default)'],
@@ -23,6 +25,39 @@ function scoreColor(score) {
   if (score >= 70) return '#84cc16'
   if (score >= 50) return '#f59f00'
   return '#ef4444'
+}
+
+function fmtDue(iso) {
+  if (!iso) return null
+  const d = new Date(iso)
+  return `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** Fayl tanlash tugmalari: kamera (telefonda ochiladi), galereya, fayl. */
+function FilePickers({ onPick, disabled, withAudio }) {
+  const mk = (props, label) => (
+    <label className={`hw-pick ${disabled ? 'off' : ''}`}>
+      {label}
+      <input type="file" hidden disabled={disabled} onChange={(e) => onPick(e)} {...props} />
+    </label>
+  )
+  return (
+    <div className="hw-pickers">
+      {mk({ accept: 'image/*', capture: 'environment' }, '📷 Kamera')}
+      {mk({ accept: 'image/*' }, '🖼 Galereya')}
+      {mk({ accept: withAudio ? `${FILE_ACCEPT},${AUDIO_ACCEPT}` : FILE_ACCEPT }, '📎 Fayl')}
+    </div>
+  )
+}
+
+async function downloadBlob(url, filename) {
+  const { data } = await api.get(url, { responseType: 'blob' })
+  const href = URL.createObjectURL(data)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename || 'fayl'
+  a.click()
+  URL.revokeObjectURL(href)
 }
 
 /** Bitta topshiriq natijasi — ball + savolma-savol tahlil + xulosa. */
@@ -100,12 +135,31 @@ function StatusChip({ status }) {
   return null
 }
 
+/** Vazifa tafsiloti: rich matn + biriktirilgan fayl (hammaga ko'rinadi). */
+function AssignmentBody({ a }) {
+  return (
+    <div className="hw-body">
+      {a.body && (
+        // Server tomonda sanitize qilingan HTML (apps/homework: nh3 allowlist)
+        <div className="hw-body-html" dangerouslySetInnerHTML={{ __html: a.body }} />
+      )}
+      {a.has_attachment && (
+        <button
+          className="hw-attach"
+          onClick={() => downloadBlob(`/homework/assignments/${a.id}/file/`, a.attachment_name)}
+        >
+          📎 {a.attachment_name} — yuklab olish
+        </button>
+      )}
+    </div>
+  )
+}
+
 /** O'quvchining bitta vazifa bo'yicha bo'limi: yuklash -> kutish -> natija. */
 function StudentSubmitBox({ assignment, onChanged }) {
   const [sub, setSub] = useState(assignment.my_submission || null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
-  const fileRef = useRef(null)
 
   // AI tekshiruvi tugaguncha polling (4s)
   useEffect(() => {
@@ -129,6 +183,7 @@ function StudentSubmitBox({ assignment, onChanged }) {
 
   async function upload(e) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
     setUploading(true)
     setError('')
@@ -140,15 +195,15 @@ function StudentSubmitBox({ assignment, onChanged }) {
       onChanged?.()
     } catch (err) { setError(errMessage(err)) }
     setUploading(false)
-    if (fileRef.current) fileRef.current.value = ''
   }
 
-  const accept = assignment.skill_key === 'speaking' ? ACCEPT_AUDIO : ACCEPT
   return (
     <div className="hw-submit">
+      <AssignmentBody a={assignment} />
       {sub && (
         <div className="hw-sub-row">
           <span className="muted">📎 {sub.file_name}</span>
+          {sub.is_late && <span className="hw-chip late">⏰ Kech</span>}
           <StatusChip status={sub.status} />
         </div>
       )}
@@ -157,23 +212,19 @@ function StudentSubmitBox({ assignment, onChanged }) {
       {sub?.status === 'done' && <ResultCard sub={sub} />}
 
       {sub?.status !== 'checking' && (
-        <label className={`hw-upload ${uploading ? 'off' : ''}`}>
-          {uploading ? '⏳ Yuklanmoqda…' : (sub ? '🔄 Qayta topshirish' : '📤 Vazifani topshirish')}
-          <input
-            ref={fileRef}
-            type="file"
-            accept={accept}
-            onChange={upload}
-            disabled={uploading}
-            hidden
-          />
-        </label>
+        <>
+          <p className="hw-hint muted">
+            {uploading
+              ? '⏳ Yuklanmoqda…'
+              : assignment.skill_key === 'speaking'
+                ? 'Audio yozuv yuklang (mp3/wav/m4a/ogg) — AI tinglab baholaydi.'
+                : sub
+                  ? 'Qayta topshirish: daftar rasmini kamera bilan oling yoki fayl tanlang.'
+                  : 'Daftar sahifasini kamera bilan suratga oling, galereyadan tanlang yoki PDF/Word yuklang.'}
+          </p>
+          <FilePickers onPick={upload} disabled={uploading} withAudio={assignment.skill_key === 'speaking'} />
+        </>
       )}
-      <p className="hw-hint muted">
-        {assignment.skill_key === 'speaking'
-          ? 'Audio yozuv yuklang (mp3/wav/m4a/ogg) — AI tinglab baholaydi.'
-          : 'Daftar sahifasi rasmi, PDF yoki Word fayl yuklang — AI savolma-savol tekshiradi.'}
-      </p>
     </div>
   )
 }
@@ -207,7 +258,15 @@ function TeacherSubmissionRow({ sub: initial }) {
     <div className="hw-teacher-sub">
       <button className="hw-sub-row btn-plain" onClick={toggle}>
         <b>{sub.student_name}</b>
-        <span className="muted">📎 {sub.file_name}</span>
+        <span
+          className="muted hw-file-link"
+          title="Faylni yuklab olish"
+          onClick={(e) => {
+            e.stopPropagation()
+            downloadBlob(`/homework/submissions/${sub.id}/file/`, sub.file_name)
+          }}
+        >📎 {sub.file_name}</span>
+        {sub.is_late && <span className="hw-chip late">⏰ Kech</span>}
         {sub.overall_score != null && (
           <b style={{ color: scoreColor(sub.overall_score) }}>{Math.round(sub.overall_score)}</b>
         )}
@@ -220,11 +279,60 @@ function TeacherSubmissionRow({ sub: initial }) {
   )
 }
 
+/** O'qituvchi: vazifa ochilganda statistika + topshiriqlar ro'yxati. */
+function TeacherPanel({ assignment, onDeleted }) {
+  const [detail, setDetail] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/homework/assignments/${assignment.id}/`)
+      setDetail(data)
+    } catch { setDetail({ submissions: [], stats: null }) }
+  }, [assignment.id])
+
+  useEffect(() => { load() }, [load])
+
+  async function remove() {
+    if (!window.confirm("Vazifa va barcha topshiriqlar o'chiriladi. Ishonchingiz komilmi?")) return
+    try {
+      await api.delete(`/homework/assignments/${assignment.id}/`)
+      onDeleted?.()
+    } catch { /* xato bo'lsa ro'yxat qoladi */ }
+  }
+
+  if (!detail) return <p className="muted" style={{ padding: '4px 12px' }}>Yuklanmoqda…</p>
+  return (
+    <div className="hw-teacher-list">
+      <AssignmentBody a={assignment} />
+      {detail.stats && (
+        <div className="hw-stats">
+          <span>👥 Topshirdi: <b>{detail.stats.submitted_count}/{detail.stats.students_count}</b></span>
+          {detail.stats.avg_score != null && (
+            <span>📊 O'rtacha: <b style={{ color: scoreColor(detail.stats.avg_score) }}>
+              {detail.stats.avg_score}
+            </b></span>
+          )}
+          <span className="spacer" />
+          <button className="hw-del" onClick={remove} title="Vazifani o'chirish">🗑</button>
+        </div>
+      )}
+      {detail.submissions.length === 0
+        ? <p className="muted" style={{ padding: '2px 0' }}>Hali hech kim topshirmagan.</p>
+        : detail.submissions.map((s) => <TeacherSubmissionRow key={s.id} sub={s} />)}
+      <button className="btn secondary sm" onClick={load}>↻ Yangilash</button>
+    </div>
+  )
+}
+
+const EMPTY_FORM = { title: '', body: '', due_at: '', skill_key: '', extra_instructions: '' }
+
 export default function HomeworkTab({ courseId, isTeacher }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState('')
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ title: '', description: '', skill_key: '', extra_instructions: '' })
+  const [form, setForm] = useState(EMPTY_FORM)
+  const [attachment, setAttachment] = useState(null) // File
+  const [saving, setSaving] = useState(false)
   const [openId, setOpenId] = useState(null)
 
   const load = useCallback(async () => {
@@ -238,12 +346,20 @@ export default function HomeworkTab({ courseId, isTeacher }) {
 
   async function createAssignment(e) {
     e.preventDefault()
+    setSaving(true)
+    setError('')
+    const fd = new FormData()
+    fd.append('course_id', courseId)
+    Object.entries(form).forEach(([k, v]) => fd.append(k, v))
+    if (attachment) fd.append('attachment', attachment)
     try {
-      await api.post('/homework/assignments/', { course_id: courseId, ...form })
-      setForm({ title: '', description: '', skill_key: '', extra_instructions: '' })
+      await api.post('/homework/assignments/', fd)
+      setForm(EMPTY_FORM)
+      setAttachment(null)
       setShowForm(false)
       load()
     } catch (err) { setError(errMessage(err)) }
+    setSaving(false)
   }
 
   if (items === null && !error) return <p className="muted" style={{ padding: 14 }}>Yuklanmoqda…</p>
@@ -252,48 +368,67 @@ export default function HomeworkTab({ courseId, isTeacher }) {
     <div className="hw-tab">
       {error && <div className="error-box">{error}</div>}
 
-      {isTeacher && (
-        <>
-          {!showForm && (
-            <button className="btn sm hw-new" onClick={() => setShowForm(true)}>+ Vazifa berish</button>
-          )}
-          {showForm && (
-            <form className="hw-form" onSubmit={createAssignment}>
+      {isTeacher && !showForm && (
+        <button className="btn sm hw-new" onClick={() => setShowForm(true)}>+ Vazifa berish</button>
+      )}
+      {isTeacher && showForm && (
+        <form className="hw-form" onSubmit={createAssignment}>
+          <input
+            className="input"
+            placeholder="Vazifa nomi (masalan: Kvadrat tenglamalar — 5 ta misol)"
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            autoFocus
+          />
+          {/* Vazifa matni — o'qituvchi o'zi yozadi (qalin/ro'yxat/sarlavha) */}
+          <RichEditor
+            value={form.body}
+            onChange={(body) => setForm((f) => ({ ...f, body }))}
+            placeholder="Vazifa matnini shu yerda yozing: misollar, savollar, ko'rsatmalar…"
+          />
+          {/* Yoki tayyor faylni biriktiradi: Word/PDF, telefonda kamera/galereya */}
+          <div className="hw-attach-row">
+            <span className="muted">Fayl biriktirish (ixtiyoriy):</span>
+            <FilePickers onPick={(e) => { setAttachment(e.target.files?.[0] || null); e.target.value = '' }} />
+            {attachment && (
+              <span className="hw-chip">
+                📎 {attachment.name}
+                <button type="button" className="hw-chip-x" onClick={() => setAttachment(null)}>✕</button>
+              </span>
+            )}
+          </div>
+          <div className="hw-form-row">
+            <label className="hw-due">
+              <span className="muted">⏰ Muddat:</span>
               <input
                 className="input"
-                placeholder="Vazifa nomi (masalan: Kvadrat tenglamalar — 5 ta misol)"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                autoFocus
+                type="datetime-local"
+                value={form.due_at}
+                onChange={(e) => setForm({ ...form, due_at: e.target.value })}
               />
-              <textarea
-                className="input"
-                rows={2}
-                placeholder="Tavsif (ixtiyoriy)"
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-              <select
-                className="input"
-                value={form.skill_key}
-                onChange={(e) => setForm({ ...form, skill_key: e.target.value })}
-                title="Til fanlari uchun ko'nikma"
-              >
-                {SKILLS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select>
-              <input
-                className="input"
-                placeholder="AI'ga ko'rsatma (ixtiyoriy: '7-sinf darajasida bahola')"
-                value={form.extra_instructions}
-                onChange={(e) => setForm({ ...form, extra_instructions: e.target.value })}
-              />
-              <div className="row">
-                <button className="btn sm" type="submit" disabled={!form.title.trim()}>Berish</button>
-                <button className="btn secondary sm" type="button" onClick={() => setShowForm(false)}>Bekor</button>
-              </div>
-            </form>
-          )}
-        </>
+            </label>
+            <select
+              className="input"
+              value={form.skill_key}
+              onChange={(e) => setForm({ ...form, skill_key: e.target.value })}
+              title="Til fanlari uchun ko'nikma"
+            >
+              {SKILLS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+          </div>
+          <input
+            className="input"
+            placeholder="AI'ga ko'rsatma (ixtiyoriy: '7-sinf darajasida bahola')"
+            value={form.extra_instructions}
+            onChange={(e) => setForm({ ...form, extra_instructions: e.target.value })}
+          />
+          <div className="row">
+            <button className="btn sm" type="submit" disabled={!form.title.trim() || saving}>
+              {saving ? '⏳…' : '✓ Berish'}
+            </button>
+            <button className="btn secondary sm" type="button" onClick={() => setShowForm(false)}>Bekor</button>
+          </div>
+        </form>
       )}
 
       {items?.length === 0 && (
@@ -310,7 +445,11 @@ export default function HomeworkTab({ courseId, isTeacher }) {
           >
             <div className="hw-card-title">
               <b>📝 {a.title}</b>
-              {a.description && <span className="muted">{a.description}</span>}
+              <span className="muted">
+                {a.due_at && <>⏰ {fmtDue(a.due_at)}</>}
+                {a.due_at && a.has_attachment && ' · '}
+                {a.has_attachment && <>📎 {a.attachment_name}</>}
+              </span>
             </div>
             {isTeacher
               ? <span className="hw-chip">{a.submissions_count ?? 0} topshiriq</span>
@@ -321,36 +460,11 @@ export default function HomeworkTab({ courseId, isTeacher }) {
 
           {openId === a.id && (
             isTeacher
-              ? <TeacherPanel assignmentId={a.id} />
+              ? <TeacherPanel assignment={a} onDeleted={() => { setOpenId(null); load() }} />
               : <StudentSubmitBox assignment={a} onChanged={load} />
           )}
         </div>
       ))}
-    </div>
-  )
-}
-
-/** O'qituvchi: vazifa ochilganda topshiriqlar ro'yxati (2.5s yangilanadi emas — qo'lda). */
-function TeacherPanel({ assignmentId }) {
-  const [detail, setDetail] = useState(null)
-
-  const load = useCallback(async () => {
-    try {
-      const { data } = await api.get(`/homework/assignments/${assignmentId}/`)
-      setDetail(data)
-    } catch { setDetail({ submissions: [] }) }
-  }, [assignmentId])
-
-  useEffect(() => { load() }, [load])
-
-  if (!detail) return <p className="muted" style={{ padding: '4px 12px' }}>Yuklanmoqda…</p>
-  if (detail.submissions.length === 0) {
-    return <p className="muted" style={{ padding: '4px 12px' }}>Hali hech kim topshirmagan.</p>
-  }
-  return (
-    <div className="hw-teacher-list">
-      {detail.submissions.map((s) => <TeacherSubmissionRow key={s.id} sub={s} />)}
-      <button className="btn secondary sm" onClick={load}>↻ Yangilash</button>
     </div>
   )
 }

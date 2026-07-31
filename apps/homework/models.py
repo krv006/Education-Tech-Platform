@@ -28,6 +28,13 @@ class Assignment(TimeStampedUUIDModel):
     course = ForeignKey('lessons.Course', CASCADE, related_name='assignments')
     title = CharField(max_length=200)
     description = TextField(blank=True)
+    # O'qituvchi rich editor'da yozgan vazifa matni — server tomonda
+    # tozalangan (sanitize) HTML saqlanadi
+    body = TextField(blank=True)
+    # Vazifa fayli (Word/PDF/rasm) — o'qituvchi tayyorini yuklaydi,
+    # o'quvchilar yuklab oladi
+    attachment = FileField(upload_to='homework/tasks/%Y/%m/', null=True, blank=True)
+    attachment_name = CharField(max_length=255, blank=True)
     due_at = DateTimeField(null=True, blank=True, db_index=True)
     # Til fanlari uchun ko'nikma: writing / reading / listening / speaking.
     # Bo'sh bo'lsa — oddiy fan sifatida tekshiriladi.

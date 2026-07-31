@@ -199,6 +199,69 @@ class HomeworkTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(mock_grade.call_count, 2)
 
+    # ── v2: rich matn, biriktirilgan fayl, muddat, statistika, o'chirish ──
+    def test_body_html_is_sanitized(self):
+        r = self.create_assignment(body='<p>Yeching: <b>x²+1</b></p><script>alert(1)</script>')
+        self.assertEqual(r.status_code, 201)
+        self.assertIn('<b>', r.data['body'])
+        self.assertNotIn('script', r.data['body'])
+        self.assertNotIn('alert', r.data['body'])
+
+    def test_attachment_upload_and_download(self):
+        r = self.api(self.teacher).post('/api/v1/homework/assignments/', {
+            'course_id': str(self.course.id),
+            'title': 'Word vazifa',
+            'attachment': SimpleUploadedFile('topshiriq.docx', b'PK fake docx'),
+        }, format='multipart')
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(r.data['has_attachment'])
+        self.assertEqual(r.data['attachment_name'], 'topshiriq.docx')
+        # o'quvchi faylni yuklab oladi
+        d = self.api(self.student).get(f"/api/v1/homework/assignments/{r.data['id']}/file/")
+        self.assertEqual(d.status_code, 200)
+        # begona yuklab olmaydi
+        d = self.api(self.stranger).get(f"/api/v1/homework/assignments/{r.data['id']}/file/")
+        self.assertEqual(d.status_code, 403)
+
+    def test_attachment_bad_ext_rejected(self):
+        r = self.api(self.teacher).post('/api/v1/homework/assignments/', {
+            'course_id': str(self.course.id),
+            'title': 'X',
+            'attachment': SimpleUploadedFile('virus.exe', b'MZ'),
+        }, format='multipart')
+        self.assertEqual(r.status_code, 400)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_late_submission_flagged(self, _):
+        r = self.create_assignment(due_at='2020-01-01T10:00')
+        a_id = r.data['id']
+        sub = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        self.assertTrue(sub.data['is_late'])
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_teacher_stats(self, _):
+        a_id = self.create_assignment().data['id']
+        self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        )
+        r = self.api(self.teacher).get(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(r.data['stats']['students_count'], 1)
+        self.assertEqual(r.data['stats']['submitted_count'], 1)
+        self.assertEqual(r.data['stats']['avg_score'], 78)
+
+    def test_delete_assignment_teacher_only(self):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.student).delete(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.other_teacher).delete(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.teacher).delete(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(r.status_code, 204)
+        r = self.api(self.teacher).get(f'/api/v1/homework/assignments/{a_id}/')
+        self.assertEqual(r.status_code, 404)
+
     def test_list_requires_course_access(self):
         self.create_assignment()
         r = self.api(self.stranger).get(f'/api/v1/homework/assignments/?course={self.course.id}')

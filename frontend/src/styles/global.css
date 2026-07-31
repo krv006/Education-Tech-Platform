@@ -1833,6 +1833,120 @@ a {
   border-radius: 8px;
 }
 .hw-recheck:hover { background: var(--indigo-bg); color: var(--indigo); }
+.hw-chip.late { background: #fef2f2; color: var(--red); }
+.hw-chip-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font-size: 11px;
+  margin-left: 4px;
+  padding: 0;
+}
+.hw-file-link { cursor: pointer; }
+.hw-file-link:hover { color: var(--indigo); text-decoration: underline; }
+/* Vazifa matni (rich HTML) + biriktirilgan fayl */
+.hw-body { display: grid; gap: 8px; padding: 0 0 4px; }
+.hw-body-html {
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  background: #f7f8fd;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.hw-body-html h2, .hw-body-html h3 { margin: 4px 0; }
+.hw-body-html ul, .hw-body-html ol { margin: 4px 0; padding-left: 20px; }
+.hw-body-html p { margin: 4px 0; }
+.hw-attach {
+  border: 1px dashed var(--line2);
+  background: var(--surface);
+  color: var(--indigo);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  justify-self: start;
+}
+.hw-attach:hover { background: var(--indigo-bg); }
+/* Kamera / galereya / fayl tanlash tugmalari */
+.hw-pickers { display: flex; gap: 8px; flex-wrap: wrap; }
+.hw-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--indigo);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  border-radius: 12px;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+.hw-pick:hover { background: var(--indigo-d); }
+.hw-pick.off { opacity: 0.6; cursor: default; }
+.hw-attach-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hw-form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.hw-form-row .input { flex: 1; min-width: 150px; }
+.hw-due { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 220px; }
+.hw-due .input { flex: 1; }
+/* O'qituvchi statistikasi */
+.hw-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: #f7f8fd;
+  border-radius: 10px;
+  padding: 9px 12px;
+  width: 100%;
+  font-size: var(--fs-sm);
+}
+.hw-del {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.hw-del:hover { background: #fef2f2; }
+
+/* ─── Rich editor (vazifa matni uchun, CKEditor uslubi) ─── */
+.rte { border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.rte:focus-within { border-color: var(--indigo); box-shadow: 0 0 0 3px rgba(91, 91, 240, 0.12); }
+.rte-toolbar {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f8fd;
+}
+.rte-toolbar button {
+  border: none;
+  background: none;
+  color: var(--ink);
+  min-width: 34px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.rte-toolbar button:hover { background: var(--indigo-bg); }
+.rte-area {
+  min-height: 96px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  outline: none;
+}
+.rte-area:empty::before { content: attr(data-placeholder); color: var(--muted); }
+.rte-area h2, .rte-area h3 { margin: 4px 0; }
+.rte-area ul, .rte-area ol { margin: 4px 0; padding-left: 20px; }
 
 /* ─── Mobil doska: asosiy userlar telefonda — doska katta, klaviatura bottom-sheet ───
    MUHIM: bu blok fayl OXIRIDA turishi shart — bazaviy .board-* qoidalaridan keyin,

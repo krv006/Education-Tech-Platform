@@ -4,12 +4,14 @@ Tekshiruv fonda (thread) yuradi: o'quvchi faylni yuklagach darhol javob oladi
 (status=checking), frontend polling bilan natijani kutadi. Testlarda
 settings.HOMEWORK_CHECK_ASYNC=False qilib sinxron ishlatiladi.
 """
+import re
 import threading
 from pathlib import Path
 
 from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts.models import ParentChildLink, User
@@ -17,6 +19,37 @@ from apps.lessons.models import Course, Enrollment
 
 from . import ai
 from .models import Assignment, Submission
+
+# Vazifa fayli (o'qituvchi biriktiradi) — AI'ga bormaydi, faqat yuklab olinadi
+ATTACHMENT_EXTENSIONS = {'.pdf', '.doc', '.docx', '.png', '.jpg', '.jpeg', '.webp'}
+
+# Rich editor HTML'iga ruxsat etilgan teglar — XSS'dan himoya
+_ALLOWED_TAGS = {
+    'p', 'br', 'b', 'strong', 'i', 'em', 'u', 's', 'strike',
+    'h2', 'h3', 'ul', 'ol', 'li', 'blockquote', 'div', 'span', 'sub', 'sup',
+}
+
+
+def sanitize_html(html: str) -> str:
+    """O'qituvchi yozgan HTML'ni tozalaydi. nh3 (Rust ammonia) bo'lsa u bilan,
+    bo'lmasa konservativ regex fallback (skript/atributlar olib tashlanadi)."""
+    html = (html or '').strip()
+    if not html:
+        return ''
+    try:
+        import nh3
+        return nh3.clean(html, tags=_ALLOWED_TAGS, attributes={})
+    except ImportError:
+        # Fallback: teg atributlarini butunlay olib tashlaymiz va faqat
+        # ruxsat etilgan teglarni qoldiramiz
+        html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.S | re.I)
+
+        def _tag(m):
+            closing, name = m.group(1), m.group(2).lower()
+            if name in _ALLOWED_TAGS:
+                return f'<{closing}{name}>'
+            return ''
+        return re.sub(r'<\s*(/?)\s*([a-zA-Z0-9]+)[^>]*>', _tag, html)
 
 
 # ── yordamchilar ────────────────────────────────────────────────────────────
@@ -75,6 +108,9 @@ def _assignment_dict(a: Assignment) -> dict:
         'subject': a.course.subject,
         'title': a.title,
         'description': a.description,
+        'body': a.body,
+        'attachment_name': a.attachment_name,
+        'has_attachment': bool(a.attachment),
         'due_at': a.due_at,
         'skill_key': a.skill_key,
         'created_at': a.created_at,
@@ -82,6 +118,7 @@ def _assignment_dict(a: Assignment) -> dict:
 
 
 def _submission_dict(s: Submission, include_result: bool = True) -> dict:
+    due = s.assignment.due_at
     data = {
         'id': str(s.id),
         'assignment_id': str(s.assignment_id),
@@ -92,6 +129,7 @@ def _submission_dict(s: Submission, include_result: bool = True) -> dict:
         'overall_score': s.overall_score,
         'grade': s.grade,
         'error': s.error,
+        'is_late': bool(due and s.created_at and s.created_at > due),
         'created_at': s.created_at,
         'checked_at': s.checked_at,
     }
@@ -101,8 +139,23 @@ def _submission_dict(s: Submission, include_result: bool = True) -> dict:
 
 
 # ── vazifa (Assignment) ─────────────────────────────────────────────────────
+def _parse_due(due_at):
+    """datetime-local ('2026-08-05T14:30') yoki ISO satrni aware datetime'ga."""
+    if not due_at:
+        return None
+    if isinstance(due_at, str):
+        parsed = parse_datetime(due_at)
+        if parsed is None:
+            raise ValidationError({'due_at': "Muddat formati noto'g'ri."})
+        due_at = parsed
+    if timezone.is_naive(due_at):
+        due_at = timezone.make_aware(due_at)
+    return due_at
+
+
 def create_assignment(*, teacher: User, course_id, title: str, description: str = '',
-                      due_at=None, skill_key: str = '', extra_instructions: str = '') -> dict:
+                      body: str = '', due_at=None, skill_key: str = '',
+                      extra_instructions: str = '', attachment=None) -> dict:
     course = _get_course(course_id)
     if course.teacher_id != teacher.id:
         raise PermissionDenied("Faqat kurs o'qituvchisi vazifa bera oladi.")
@@ -111,15 +164,46 @@ def create_assignment(*, teacher: User, course_id, title: str, description: str 
     skill_key = (skill_key or '').strip().lower()
     if skill_key and skill_key not in ai.SKILLS:
         raise ValidationError({'skill_key': f"Noto'g'ri ko'nikma: {sorted(ai.SKILLS)}"})
+
+    attachment_name = ''
+    if attachment is not None:
+        ext = Path(attachment.name or '').suffix.lower()
+        if ext not in ATTACHMENT_EXTENSIONS:
+            raise ValidationError({'attachment': (
+                f"'{ext}' qo'llab-quvvatlanmaydi. Mumkin: {', '.join(sorted(ATTACHMENT_EXTENSIONS))}"
+            )})
+        if attachment.size > ai.MAX_FILE_SIZE_MB * 1024 * 1024:
+            raise ValidationError({'attachment': f'Fayl {ai.MAX_FILE_SIZE_MB} MB dan katta.'})
+        attachment_name = (attachment.name or 'vazifa')[:255]
+
     assignment = Assignment.objects.create(
         course=course,
         title=title.strip(),
         description=(description or '').strip(),
-        due_at=due_at or None,
+        body=sanitize_html(body),
+        attachment=attachment,
+        attachment_name=attachment_name,
+        due_at=_parse_due(due_at),
         skill_key=skill_key,
         extra_instructions=(extra_instructions or '').strip(),
     )
     return _assignment_dict(assignment)
+
+
+def delete_assignment(*, teacher: User, assignment_id) -> None:
+    a = _get_assignment(assignment_id)
+    if a.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi vazifani o'chira oladi.")
+    a.delete()
+
+
+def assignment_file(*, user: User, assignment_id) -> tuple:
+    a = _get_assignment(assignment_id)
+    if not _can_view_course(user, a.course):
+        raise PermissionDenied("Bu faylni ko'rish huquqingiz yo'q.")
+    if not a.attachment:
+        raise NotFound("Bu vazifada biriktirilgan fayl yo'q.")
+    return a.attachment.path, a.attachment_name or 'vazifa'
 
 
 def list_assignments(*, user: User, course_id) -> list:
@@ -150,10 +234,17 @@ def get_assignment(*, user: User, assignment_id) -> dict:
         raise PermissionDenied("Bu vazifani ko'rish huquqingiz yo'q.")
     data = _assignment_dict(a)
     if a.course.teacher_id == user.id:
-        data['submissions'] = [
-            _submission_dict(s, include_result=False)
-            for s in a.submissions.select_related('student')
-        ]
+        subs = list(a.submissions.select_related('student', 'assignment'))
+        data['submissions'] = [_submission_dict(s, include_result=False) for s in subs]
+        # Statistika: nechta o'quvchidan nechtasi topshirdi, o'rtacha ball
+        scores = [s.overall_score for s in subs if s.overall_score is not None]
+        data['stats'] = {
+            'students_count': Enrollment.objects.filter(
+                course=a.course, status=Enrollment.Status.APPROVED,
+            ).count(),
+            'submitted_count': len({s.student_id for s in subs}),
+            'avg_score': round(sum(scores) / len(scores), 1) if scores else None,
+        }
     else:
         student_ids = [user.id]
         if user.role == 'parent':
