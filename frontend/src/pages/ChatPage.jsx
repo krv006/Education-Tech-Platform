@@ -6,6 +6,7 @@ import { Link, useNavigate } from 'react-router-dom'
 
 import api, { errMessage } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import HomeworkTab from '../components/HomeworkTab'
 import { fmtTime, fmtWhen, LESSON_STATUS, sameDay } from '../lib/ui'
 
 // Xabar ichidagi /boards/<id> havolasini bosiladigan qilamiz (doska PDF xabari)
@@ -520,6 +521,7 @@ export default function ChatPage() {
               <div className="tg-tabs">
                 <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>💬 Chat</button>
                 <button className={tab === 'lessons' ? 'on' : ''} onClick={() => setTab('lessons')}>📅 Darslar</button>
+                <button className={tab === 'homework' ? 'on' : ''} onClick={() => setTab('homework')}>📝 Vazifa</button>
                 {isTeacher && (
                   <button className={tab === 'students' ? 'on' : ''} onClick={() => setTab('students')}>👥 O'quvchilar</button>
                 )}
@@ -539,6 +541,9 @@ export default function ChatPage() {
             )}
             {active.kind === 'course' && tab === 'students' && isTeacher && (
               <StudentsTab courseId={active.course} />
+            )}
+            {active.kind === 'course' && tab === 'homework' && (
+              <HomeworkTab courseId={active.course} isTeacher={isTeacher} />
             )}
 
             {(active.kind !== 'course' || tab === 'chat') && (

@@ -1677,6 +1677,163 @@ a {
   .logo { font-size: 17px; }
 }
 
+/* ─── 📝 Uy vazifasi (AI tekshiruv) — kurs chatidagi tab ─── */
+.hw-tab {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  background: #f2f3fb;
+}
+.hw-new { justify-self: start; }
+.hw-form {
+  display: grid;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+}
+.hw-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.btn-plain {
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.hw-card-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.hw-card-head:hover { background: #f7f8fd; }
+.hw-card-title { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.hw-card-title b { font-size: var(--fs-base); }
+.hw-card-title .muted { font-size: var(--fs-xs); }
+.hw-chip {
+  flex-shrink: 0;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--indigo-bg);
+  color: var(--indigo);
+  white-space: nowrap;
+}
+.hw-chip.checking { background: #fff7ee; color: var(--amber-d); }
+.hw-chip.done { background: var(--green-bg); color: var(--green-d); }
+.hw-chip.error { background: #fef2f2; color: var(--red); }
+.hw-chip.todo { background: var(--bg); color: var(--muted); }
+.hw-submit { padding: 4px 14px 14px; display: grid; gap: 8px; }
+.hw-sub-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hw-upload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--indigo);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--fs-base);
+  border-radius: 12px;
+  padding: 12px 18px;
+  cursor: pointer;
+  justify-self: start;
+}
+.hw-upload:hover { background: var(--indigo-d); }
+.hw-upload.off { opacity: 0.6; cursor: default; }
+.hw-hint { font-size: var(--fs-2xs); margin: 0; }
+/* Natija kartochkasi */
+.hw-result { display: grid; gap: 8px; }
+.hw-score-row { display: flex; align-items: center; gap: 12px; }
+.hw-score {
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  border: 4px solid;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  line-height: 1;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.hw-score b { font-size: 22px; }
+.hw-score span { font-size: 10px; color: var(--muted); }
+.hw-score-info { display: grid; gap: 2px; font-size: var(--fs-base); }
+.hw-q { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.hw-q-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: none;
+  background: #f7f8fd;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.hw-q-head .num {
+  background: var(--indigo);
+  color: #fff;
+  border-radius: 999px;
+  min-width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.hw-q-head .text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hw-q-body { padding: 10px 12px; display: grid; gap: 6px; font-size: var(--fs-sm); }
+.hw-q-body p { margin: 0; }
+.hw-mistakes ul, .hw-suggest ul { margin: 4px 0 0; padding-left: 18px; }
+.hw-mistakes { color: #b42318; }
+.hw-suggest { color: #146c43; }
+.hw-summary {
+  background: #f7f8fd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+.hw-summary p { margin: 0; }
+/* O'qituvchi ro'yxati */
+.hw-teacher-list { padding: 4px 14px 14px; display: grid; gap: 8px; justify-items: start; }
+.hw-teacher-sub { width: 100%; display: grid; gap: 6px; }
+.hw-teacher-sub .hw-sub-row { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.hw-teacher-sub .hw-sub-row:hover { background: #f7f8fd; }
+.hw-recheck {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.hw-recheck:hover { background: var(--indigo-bg); color: var(--indigo); }
+
 /* ─── Mobil doska: asosiy userlar telefonda — doska katta, klaviatura bottom-sheet ───
    MUHIM: bu blok fayl OXIRIDA turishi shart — bazaviy .board-* qoidalaridan keyin,
    aks holda bir xil spetsifiklikda bazaviy qoida ustun keladi.
