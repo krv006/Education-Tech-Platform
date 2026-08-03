@@ -20,7 +20,23 @@ rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 |---|---|
 | `apps/accounts` | Auth (JWT), 4 rol, ota-ona↔bola bog'lash (taklif-kod + tasdiq), rozilik (consent) |
 | `apps/lessons` | Kurs, dars jadvali, yozilish, davomat hisoboti |
-| `apps/live` | LiveKit xona tokeni + avtomatik davomat (kirdi/chiqdi) |
+| `apps/live` | LiveKit xona tokeni + avtomatik davomat, diqqat tekshiruvi, fokus jurnali |
+| `apps/chat` | Telegram uslubidagi chat: kurs guruhlari + o'qituvchi↔o'quvchi direct (so'rov/block) |
+| `apps/board` | Jonli dars doskasi: chizish, matn/formula, o'chirish sababi, PDF → chat |
+| `apps/homework` | AI uy vazifasi (Gemini): vazifa berish, fayl topshirish, savolma-savol o'zbekcha baholash |
+| `apps/core` | UUID/timestamp baza modellari, RBAC (`permissions.py`), audit log |
+
+## Frontend integratsiyasi (alohida loyiha uchun shartnoma)
+
+- **Auth:** `POST /api/v1/auth/login/` → `{access, refresh}`; har so'rovda `Authorization: Bearer <access>`
+- **Hujjatlar:** `/api/docs/` (Swagger UI), `/api/schema/` (OpenAPI — client generatsiya qilsa bo'ladi)
+- **LiveKit:** token `POST /api/v1/live/token/` (`{lesson_id}`), ulanish `wss://<domain>/livekit`
+- **Doska PDF havolasi:** dars tugaganda backend kurs chatiga `"... /boards/<lesson_id>"`
+  matnli xabar yuboradi — frontend shu yo'l uchun sahifa qilishi kerak
+  (doska ma'lumoti: `GET /api/v1/board/<lesson_id>/`, PDF: `.../pdf/`)
+- **Fayllar:** uy vazifasi fayllari auth talab qiladi — `GET /api/v1/homework/submissions/<id>/file/`
+  va `.../assignments/<id>/file/` (to'g'ridan-to'g'ri `/media/` URL ishlatilmaydi)
+- **CORS:** frontend domenini `.env` → `CORS_ALLOWED_ORIGINS` ga qo'shish shart
 
 ## Ishga tushirish
 
