@@ -7,7 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev-only-key-change-me')
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
     'daphne',  # runserver'ni ASGI (WebSocket) qiladi — staticfiles'dan OLDIN turishi shart
@@ -140,38 +140,31 @@ if os.getenv('REDIS_URL'):
         }
     }
 
-# ─── CORS / CSRF — frontend alohida loyihada (Vercel) ───
 CORS_ALLOWED_ORIGINS = [
-    # Rasmiy frontend (Vercel)
-    'https://edu-front-silk.vercel.app',
-    # Prod API domeni
-    'https://edu.thesofmebel.uz',
-    # Dev
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-]
-# .env dagi qo'shimcha domenlar ro'yxatga qo'shiladi (almashtirmaydi)
-CORS_ALLOWED_ORIGINS += [
-    o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
-    if o.strip() and o.strip() not in CORS_ALLOWED_ORIGINS
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    # frontend (Vercel):
+    "https://edu-front-silk.vercel.app",
+    # prod API domeni:
+    "https://edu.thesofmebel.uz",
 ]
 
 # Vercel preview buildlari (har deployda yangi subdomen) ham ishlasin
-CORS_ALLOWED_ORIGIN_REGEXES = [r'^https://[\w.-]+\.vercel\.app$']
+CORS_ALLOWED_ORIGIN_REGEXES = [r"^https://[\w.-]+\.vercel\.app$"]
 
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://edu-front-silk.vercel.app',
-    'https://edu.thesofmebel.uz',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://edu-front-silk.vercel.app",
+    "https://edu.thesofmebel.uz",
 ]
 
 # LiveKit (self-hosted)

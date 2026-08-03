@@ -9,8 +9,8 @@ if os.getenv('SECRET_KEY', '').startswith('django-insecure') or not os.getenv('S
     raise RuntimeError('PROD: haqiqiy SECRET_KEY .env da berilishi shart.')
 if not os.getenv('POSTGRES_DB'):
     raise RuntimeError('PROD: Postgres majburiy (POSTGRES_DB va h.k.).')
-if '*' in ALLOWED_HOSTS:  # noqa: F405
-    raise RuntimeError('PROD: ALLOWED_HOSTS aniq domen bo\'lishi shart (masalan edu.thesofmebel.uz).')
+# ALLOWED_HOSTS = ['*'] — Caddy faqat bizning domenlarni backendga o'tkazadi,
+# host filtri proxy darajasida hal bo'lgan
 
 # Static — whitenoise (gunicorn orqali beriladi, Caddy /static ni backendga proxy qiladi)
 MIDDLEWARE.insert(  # noqa: F405
