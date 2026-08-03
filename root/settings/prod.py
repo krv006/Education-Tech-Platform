@@ -22,9 +22,11 @@ STORAGES = {
     'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
 }
 
-CSRF_TRUSTED_ORIGINS = os.getenv(
-    'CSRF_TRUSTED_ORIGINS', 'https://edu.thesofmebel.uz'
-).split(',')
+# Base'dagi ro'yxat saqlanadi, .env dagilar USTIGA qo'shiladi (almashtirmaydi)
+CSRF_TRUSTED_ORIGINS = CSRF_TRUSTED_ORIGINS + [  # noqa: F405
+    o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if o.strip() and o.strip() not in CSRF_TRUSTED_ORIGINS  # noqa: F405
+]
 
 DATABASES = {
     'default': {

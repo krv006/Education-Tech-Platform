@@ -140,19 +140,39 @@ if os.getenv('REDIS_URL'):
         }
     }
 
-# Frontend alohida loyihada (Vercel). CORS: env'dagi ro'yxat + DOIMIY ochiq
-# manzillar — server .env'ini har safar o'zgartirib yurmaslik uchun rasmiy
-# frontend domeni va dev portlar shu yerda kafolatlangan.
-_cors_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
-CORS_ALLOWED_ORIGINS = sorted(
-    {o.strip() for o in _cors_env.split(',') if o.strip()} | {
-        'https://edu-front-silk.vercel.app',  # rasmiy frontend (Vercel)
-        'http://localhost:5173', 'http://127.0.0.1:5173',  # Vite dev
-        'http://localhost:3000', 'http://127.0.0.1:3000',  # Next/CRA dev
-    }
-)
+# ─── CORS / CSRF — frontend alohida loyihada (Vercel) ───
+CORS_ALLOWED_ORIGINS = [
+    # Rasmiy frontend (Vercel)
+    'https://edu-front-silk.vercel.app',
+    # Prod API domeni
+    'https://edu.thesofmebel.uz',
+    # Dev
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+]
+# .env dagi qo'shimcha domenlar ro'yxatga qo'shiladi (almashtirmaydi)
+CORS_ALLOWED_ORIGINS += [
+    o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    if o.strip() and o.strip() not in CORS_ALLOWED_ORIGINS
+]
+
 # Vercel preview buildlari (har deployda yangi subdomen) ham ishlasin
 CORS_ALLOWED_ORIGIN_REGEXES = [r'^https://[\w.-]+\.vercel\.app$']
+
+CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://edu-front-silk.vercel.app',
+    'https://edu.thesofmebel.uz',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+]
 
 # LiveKit (self-hosted)
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', 'devkey')
