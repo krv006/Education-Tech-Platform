@@ -10,6 +10,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev-only-key-change-me')
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
 INSTALLED_APPS = [
+    'daphne',  # runserver'ni ASGI (WebSocket) qiladi — staticfiles'dan OLDIN turishi shart
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -22,6 +23,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_spectacular',
     'django_filters',
+    'channels',
     # local apps
     'apps.core',
     'apps.accounts',
@@ -62,6 +64,21 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'root.wsgi.application'
+ASGI_APPLICATION = 'root.asgi.application'
+
+# Channel layer — chat WebSocket broadcast. Prod: Redis (REDIS_URL),
+# dev/test: xotirada (bitta jarayon uchun yetarli).
+if os.getenv('REDIS_URL'):
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [os.getenv('REDIS_URL')]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}
+    }
 
 AUTH_USER_MODEL = 'accounts.User'
 

@@ -4,8 +4,9 @@
 {$DOMAIN:edu.thesofmebel.uz} {
 	encode zstd gzip
 
-	# Django — API, admin, static (whitenoise orqali backend beradi)
-	@backend path /api/* /admin/* /static/*
+	# Django — API, admin, static (whitenoise) va chat WebSocket (/ws)
+	# Caddy WebSocket upgrade'ni avtomatik proxylaydi
+	@backend path /api/* /admin/* /static/* /ws/*
 	handle @backend {
 		reverse_proxy backend:8000
 	}

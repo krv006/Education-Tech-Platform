@@ -3,6 +3,8 @@
 Onlayn ta'lim platformasi: jonli video darslar (LiveKit), avtomatik davomat va
 rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 
+> **Loyihaning to'liq umumiy hujjati: [PROJECT.md](PROJECT.md)** — modullar, API/WS
+> shartnomasi, deploy, talablar holati.
 > Arxitektura qoidalari: [ARCHITECTURE.md](ARCHITECTURE.md) — yangi kod yozishdan oldin o'qing.
 
 ## Stack
@@ -29,6 +31,12 @@ rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 ## Frontend integratsiyasi (alohida loyiha uchun shartnoma)
 
 - **Auth:** `POST /api/v1/auth/login/` → `{access, refresh}`; har so'rovda `Authorization: Bearer <access>`
+- **Chat real-time (WebSocket):** `wss://<domain>/ws/chat/<room_id>/?token=<access>`
+  - Yopilish kodlari: `4401` token yaroqsiz, `4403` xonaga a'zo emas
+  - Yuborish: `{"type":"message","text":"..."}` (yoki avvalgidek REST `POST .../send/` — ikkalasi ham broadcast bo'ladi)
+  - "Yozmoqda...": `{"type":"typing"}` yuboriladi → boshqalarga `{"type":"typing","user_id","name"}` keladi (o'zingizni filtrlab tashlang)
+  - Kelgan xabar: `{"type":"message","message":{id,room,sender,text,created_at}}`
+  - Tarix/o'qilgan belgisi avvalgidek REST orqali (`GET .../messages/`, `POST .../read/`)
 - **Hujjatlar:** `/api/docs/` (Swagger UI), `/api/schema/` (OpenAPI — client generatsiya qilsa bo'ladi)
 - **LiveKit:** token `POST /api/v1/live/token/` (`{lesson_id}`), ulanish `wss://<domain>/livekit`
 - **Doska PDF havolasi:** dars tugaganda backend kurs chatiga `"... /boards/<lesson_id>"`

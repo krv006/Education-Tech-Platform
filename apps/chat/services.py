@@ -7,7 +7,7 @@ from apps.accounts.models import User
 from apps.core import audit
 from apps.lessons.models import Course, Enrollment
 
-from . import selectors
+from . import realtime, selectors
 from .models import ChatRoom, Message, RoomRead
 
 
@@ -41,6 +41,10 @@ def send_message(*, user: User, room_id, text: str) -> Message:
     message = Message.objects.create(room=room, sender=user, text=text)
     # xona ro'yxatda tepaga chiqsin
     room.save(update_fields=['updated_at'])
+    # Real-time: xonaning WebSocket guruhiga darhol tarqatamiz —
+    # tranzaksiya muvaffaqiyatli yopilgandan KEYIN (aks holda ulangan
+    # client hali bazada yo'q xabarni ko'rishi mumkin)
+    transaction.on_commit(lambda: realtime.broadcast_message(message))
     return message
 
 

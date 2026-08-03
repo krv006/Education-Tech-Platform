@@ -1,9 +1,11 @@
-"""Chat oqimi testlari — guruh, direct so'rov/qabul/block, ruxsatlar."""
-from django.test import TestCase
+"""Chat oqimi testlari — guruh, direct so'rov/qabul/block, ruxsatlar, WebSocket."""
+from channels.db import database_sync_to_async
+from channels.testing import WebsocketCommunicator
+from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.chat.models import ChatRoom
+from apps.chat.models import ChatRoom, Message
 from apps.lessons.models import Course, Enrollment
 
 from . import services
@@ -84,3 +86,83 @@ class ChatFlowTests(TestCase):
         parent = make('p1', User.Role.PARENT)
         r = self.api(parent).get('/api/v1/chat/rooms/')
         self.assertEqual(r.status_code, 403)
+
+
+class ChatWebSocketTests(TransactionTestCase):
+    """WebSocket oqimi: JWT ulanish, ruxsat, xabar broadcast, typing.
+
+    TransactionTestCase — consumer DB'ga alohida thread'dan kiradi
+    (database_sync_to_async), oddiy TestCase tranzaksiyasi unga ko'rinmaydi.
+    """
+
+    def setUp(self):
+        self.teacher = make('wt1', User.Role.TEACHER)
+        self.student = make('ws1', User.Role.STUDENT)
+        self.stranger = make('ws2', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='WS Algebra')
+        services.ensure_course_room(self.course)
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.room = self.course.chat_room
+
+    def ws(self, user):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        from root.asgi import application
+        token = str(AccessToken.for_user(user))
+        return WebsocketCommunicator(application, f'/ws/chat/{self.room.id}/?token={token}')
+
+    async def _connect(self, user):
+        comm = self.ws(user)
+        connected, code = await comm.connect()
+        return comm, connected, code
+
+    async def test_member_connects_and_receives_broadcast(self):
+        comm, connected, _ = await self._connect(self.student)
+        self.assertTrue(connected)
+        # REST/service orqali yuborilgan xabar WS'dan keladi
+        await database_sync_to_async(services.send_message)(
+            user=self.teacher, room_id=self.room.id, text='Salom WS!',
+        )
+        event = await comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'message')
+        self.assertEqual(event['message']['text'], 'Salom WS!')
+        self.assertEqual(event['message']['sender']['username'], 'wt1')
+        await comm.disconnect()
+
+    async def test_send_via_websocket(self):
+        teacher_comm, _, _ = await self._connect(self.teacher)
+        student_comm, _, _ = await self._connect(self.student)
+        await student_comm.send_json_to({'type': 'message', 'text': 'WS orqali'})
+        event = await teacher_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['message']['text'], 'WS orqali')
+        # bazaga ham yozilgan
+        count = await database_sync_to_async(
+            lambda: Message.objects.filter(room=self.room, text='WS orqali').count()
+        )()
+        self.assertEqual(count, 1)
+        await teacher_comm.disconnect()
+        await student_comm.disconnect()
+
+    async def test_typing_relayed(self):
+        teacher_comm, _, _ = await self._connect(self.teacher)
+        student_comm, _, _ = await self._connect(self.student)
+        await student_comm.send_json_to({'type': 'typing'})
+        event = await teacher_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'typing')
+        self.assertEqual(event['user_id'], str(self.student.id))
+        await teacher_comm.disconnect()
+        await student_comm.disconnect()
+
+    async def test_stranger_rejected(self):
+        comm, connected, _ = await self._connect(self.stranger)
+        self.assertFalse(connected)
+        await comm.disconnect()
+
+    async def test_no_token_rejected(self):
+        from root.asgi import application
+        comm = WebsocketCommunicator(application, f'/ws/chat/{self.room.id}/')
+        connected, _ = await comm.connect()
+        self.assertFalse(connected)
+        await comm.disconnect()
