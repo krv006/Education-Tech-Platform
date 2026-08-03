@@ -276,6 +276,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
   const [search, setSearch] = useState('')
+  // Suhbat filtri (prototip): all | direct | course | unread
+  const [filter, setFilter] = useState('all')
   const [error, setError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [showNew, setShowNew] = useState(false)   // student: direct so'rov + katalog
@@ -412,9 +414,13 @@ export default function ChatPage() {
   }
 
   const canWrite = active && (active.kind === 'course' || active.direct_status === 'active')
-  const filtered = rooms.filter((r) =>
-    r.title.toLowerCase().includes(search.trim().toLowerCase()),
-  )
+  const filtered = rooms.filter((r) => {
+    if (!r.title.toLowerCase().includes(search.trim().toLowerCase())) return false
+    if (filter === 'direct') return r.kind === 'direct'
+    if (filter === 'course') return r.kind === 'course'
+    if (filter === 'unread') return r.unread > 0
+    return true
+  })
 
   return (
     <div className={`chat-page tg ${active ? 'thread-open' : ''}`}>
@@ -432,6 +438,17 @@ export default function ChatPage() {
             ? <button className="btn sm" title="Yangi kurs (guruh)" onClick={() => setCourseForm({ title: '', subject: '', description: '' })}>+</button>
             : <button className="btn sm" title="O'qituvchiga yozish" onClick={openNew}>+</button>}
         </div>
+
+        {/* Suhbat turlari filtri — prototipdagi kabi */}
+        <nav className="chat-filters">
+          {[['all', 'Barchasi'], ['direct', 'Shaxsiy'], ['course', 'Guruhlar'], ['unread', "O'qilmagan"]].map(([key, label]) => (
+            <button
+              key={key}
+              className={filter === key ? 'on' : ''}
+              onClick={() => setFilter(key)}
+            >{label}</button>
+          ))}
+        </nav>
 
         {menuOpen && (
           <div className="tg-menu">
