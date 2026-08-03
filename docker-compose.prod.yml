@@ -70,6 +70,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - media:/srv/media:ro
+    networks:
+      - default
+      - navigo   # Navigo CRM nginx'iga proxy uchun (Caddyfile'dagi navigocrm bloki)
     depends_on:
       - backend
       - livekit
@@ -79,3 +82,10 @@ volumes:
   media:
   caddy_data:
   caddy_config:
+
+networks:
+  # Navigo CRM loyihasining tarmog'i — shu serverda allaqachon mavjud.
+  # Yangi serverda bo'lmasa: `docker network create navigo` yoki shu bo'lim +
+  # caddy'dagi `networks:` ni olib tashlang.
+  navigo:
+    external: true

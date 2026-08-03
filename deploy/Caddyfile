@@ -27,3 +27,12 @@
 		redir * /api/docs/ 302
 	}
 }
+
+# --- Navigo CRM (test-admin-api.navigocrm.com) ---
+# Shu serverdagi boshqa loyiha — 80/443 portlar bitta (shu Caddy'da) bo'lgani
+# uchun uning nginx'iga proxy qilamiz. Caddy konteyneri `navigo` docker
+# tarmog'iga docker-compose.prod.yml orqali avtomatik ulanadi (external
+# network) — qo'lda `docker network connect` KERAK EMAS.
+test-admin-api.navigocrm.com {
+	reverse_proxy nginx:80
+}
