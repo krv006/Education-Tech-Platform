@@ -10,7 +10,9 @@ rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 - **Backend:** Django + DRF + SimpleJWT (`root/` — settings, `apps/` — modullar)
 - **Video:** LiveKit (self-hosted, docker-compose)
 - **DB:** PostgreSQL (dev'da sqlite fallback)
-- **Frontend:** React + Vite (`frontend/` — keyingi bosqich)
+- **Frontend:** ALOHIDA loyihada (boshqa jamoa) — bu repo faqat API beradi.
+  Frontend domenini `.env` dagi `CORS_ALLOWED_ORIGINS` ga qo'shish kerak.
+  API hujjatlari: `/api/docs/` (Swagger), sxema: `/api/schema/`
 
 ## Modullar
 

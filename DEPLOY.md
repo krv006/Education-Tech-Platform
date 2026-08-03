@@ -1,12 +1,15 @@
 # Deploy — edu.thesofmebel.uz
 
-Bitta `docker compose` bilan hammasi ko'tariladi: Postgres, Redis, LiveKit, Django (gunicorn), Caddy (TLS + frontend + reverse proxy).
+Bitta `docker compose` bilan hammasi ko'tariladi: Postgres, Redis, LiveKit, Django (gunicorn), Caddy (TLS + reverse proxy).
+
+**Frontend alohida loyihada** (boshqa jamoa/hosting) — u shu domendagi API'ni chaqiradi.
+Frontend domenini `.env` dagi `CORS_ALLOWED_ORIGINS` ga qo'shishni unutmang.
 
 ## Arxitektura
 
 ```
 Internet ──443──> Caddy (TLS avto, Let's Encrypt)
-                   ├── /            -> React SPA (build qilingan static)
+                   ├── /            -> 302 /api/docs/ (frontend bu yerda emas)
                    ├── /api, /admin -> backend:8000 (gunicorn)
                    ├── /static      -> backend (whitenoise)
                    ├── /media       -> umumiy volume (file_server)
@@ -44,7 +47,7 @@ teacher / perents / student, parol: 1), `make logs`, `make superuser` va h.k.
 
 Qo'lda qilmoqchi bo'lsangiz: `cp .env.prod.example .env` -> to'ldiring -> `docker compose -f docker-compose.prod.yml up -d --build`.
 
-Tekshirish: `https://edu.thesofmebel.uz` (SPA), `/admin/` (Django admin), `/api/v1/docs/` bo'lsa API docs.
+Tekshirish: `https://edu.thesofmebel.uz/api/health/`, `/admin/` (Django admin), `/api/docs/` (Swagger).
 
 ## 4. Yangilash
 

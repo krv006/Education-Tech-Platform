@@ -1,4 +1,5 @@
-# Caddy — TLS (Let's Encrypt avtomatik) + reverse proxy + SPA static.
+# Caddy — TLS (Let's Encrypt avtomatik) + reverse proxy (faqat backend API).
+# Frontend alohida loyihada (boshqa hosting) — u shu domen API'sini chaqiradi.
 # DOMAIN env orqali o'zgartirish mumkin (docker-compose.prod.yml).
 {$DOMAIN:edu.thesofmebel.uz} {
 	encode zstd gzip
@@ -21,18 +22,8 @@
 		file_server
 	}
 
-	# React SPA — qolgan hamma yo'llar index.html ga (client-side routing)
+	# Qolgan yo'llar — API hujjatlariga yo'naltiramiz
 	handle {
-		root * /srv/www
-		# Asset'lar nomida hash bor — abadiy keshlansa bo'ladi;
-		# index.html esa HECH QACHON keshlanmasin (yangi deploy darhol ko'rinsin)
-		@assets path /assets/*
-		header @assets Cache-Control "public, max-age=31536000, immutable"
-		@page {
-			not path /assets/*
-		}
-		header @page Cache-Control "no-cache"
-		try_files {path} /index.html
-		file_server
+		redir * /api/docs/ 302
 	}
 }

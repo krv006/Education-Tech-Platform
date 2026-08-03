@@ -56,9 +56,8 @@ services:
         condition: service_started
 
   caddy:
-    build:
-      context: .
-      dockerfile: deploy/frontend.Dockerfile
+    # Frontend alohida loyihaga ko'chirildi — Caddy endi faqat TLS + API proxy
+    image: caddy:2-alpine
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:-edu.thesofmebel.uz}
@@ -67,6 +66,7 @@ services:
       - "443:443"
       - "443:443/udp"   # HTTP/3
     volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
       - media:/srv/media:ro
