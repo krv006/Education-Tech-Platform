@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import Attendance, AttentionCheck, Course, Enrollment, FocusEvent, Lesson
+from .models import (
+    Attendance,
+    AttentionCheck,
+    Course,
+    Enrollment,
+    FocusEvent,
+    Lesson,
+    LessonRecording,
+)
 
 
 @admin.register(Course)
@@ -43,6 +51,15 @@ class AttentionCheckAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description='Javob berdi')
     def answered(self, obj):
         return obj.answered_at is not None
+
+
+@admin.register(LessonRecording)
+class LessonRecordingAdmin(admin.ModelAdmin):
+    """Dars video yozuvlari — holat, fayl, egress ID."""
+
+    list_display = ['lesson', 'title', 'status', 'file_name', 'created_at', 'ended_at']
+    list_filter = ['status']
+    search_fields = ['lesson__title', 'title']
 
 
 @admin.register(FocusEvent)

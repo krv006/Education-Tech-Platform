@@ -10,6 +10,7 @@ from apps.accounts.models import User
 from apps.core import audit
 from apps.lessons.models import Enrollment, Lesson
 
+from . import realtime
 from .models import SHEET_H, SHEET_W, BoardErase, BoardGrant, BoardSheet
 
 MAX_STROKE_POINTS = 2000
@@ -111,6 +112,35 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
             'size': max(12, min(48, int(stroke.get('size', 24)))),
             'color': str(stroke.get('color', '#1c1e3a'))[:9],
         }
+    # Shakllar: to'g'ri chiziq/strelka, to'rtburchak, ellips — front doskasining
+    # to'liq asboblar paneli uchun (hammasi saqlanadi va PDF'ga tushadi)
+    if stroke.get('type') in ('line', 'rect', 'ellipse'):
+        kind = stroke['type']
+
+        def _coord(name, limit):
+            try:
+                return round(max(0, min(limit, float(stroke.get(name, 0)))), 1)
+            except (TypeError, ValueError):
+                raise ValidationError({'stroke': f"'{name}' koordinatasi noto'g'ri."})
+
+        clean = {
+            'type': kind,
+            'color': str(stroke.get('color', '#1c1e3a'))[:9],
+            'width': max(1, min(24, int(stroke.get('width', 3)))),
+        }
+        if kind == 'line':
+            clean.update(
+                x1=_coord('x1', SHEET_W), y1=_coord('y1', SHEET_H),
+                x2=_coord('x2', SHEET_W), y2=_coord('y2', SHEET_H),
+                arrow=bool(stroke.get('arrow', False)),
+            )
+        else:
+            clean.update(
+                x=_coord('x', SHEET_W), y=_coord('y', SHEET_H),
+                w=max(2, _coord('w', SHEET_W)), h=max(2, _coord('h', SHEET_H)),
+            )
+        return clean
+
     points = stroke.get('points') or []
     if not isinstance(points, list) or len(points) < 2:
         raise ValidationError({'stroke': 'Kamida 2 nuqta kerak.'})
@@ -125,7 +155,16 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
         clean.append([round(max(0, min(SHEET_W, x)), 1), round(max(0, min(SHEET_H, y)), 1)])
     color = str(stroke.get('color', '#1c1e3a'))[:9]
     width = max(1, min(24, int(stroke.get('width', 3))))
-    return {'points': clean, 'color': color, 'width': width}
+    result = {'points': clean, 'color': color, 'width': width}
+    # Marker (highlighter) — shaffof qalam: front globalAlpha bilan chizadi,
+    # PDF'da ham xuddi shu shaffoflik qo'llanadi
+    try:
+        opacity = float(stroke.get('opacity', 1))
+    except (TypeError, ValueError):
+        opacity = 1
+    if opacity < 1:
+        result['opacity'] = round(max(0.15, min(1, opacity)), 2)
+    return result
 
 
 @transaction.atomic
@@ -143,6 +182,10 @@ def add_stroke(*, user: User, lesson_id, sheet_index: int, stroke: dict) -> dict
     clean['by'] = user.first_name or user.username
     sheet.strokes = [*sheet.strokes, clean]
     sheet.save(update_fields=['strokes', 'updated_at'])
+    # Real-time: barcha ulangan ishtirokchilarga bir zumda (WS, polling emas)
+    transaction.on_commit(
+        lambda: realtime.broadcast_stroke(lesson.id, sheet.index, clean)
+    )
     return clean
 
 
@@ -154,6 +197,7 @@ def add_sheet(*, user: User, lesson_id) -> int:
     last = lesson.board_sheets.order_by('-index').first()
     index = (last.index + 1) if last else 0
     BoardSheet.objects.create(lesson=lesson, index=index)
+    transaction.on_commit(lambda: realtime.broadcast_sheet(lesson.id, index))
     return index
 
 
@@ -183,6 +227,10 @@ def erase_strokes(*, user: User, lesson_id, sheet_index: int, stroke_ids: list, 
             reason=reason, stroke_ids=list(ids),
         )
         audit.record(action='board.erase', actor=user, target=lesson, meta={'reason': reason, 'count': removed})
+        transaction.on_commit(lambda: realtime.broadcast_erase(
+            lesson.id, sheet.index, list(ids),
+            user.first_name or user.username, reason,
+        ))
     return removed
 
 
@@ -283,15 +331,53 @@ def generate_pdf(lesson: Lesson):
             c.setLineWidth(max(1, s.get('width', 3) * scale))
             c.setLineCap(1)
             c.setLineJoin(1)
+
+            kind = s.get('type')
+            if kind == 'line':
+                x1, y1 = s.get('x1', 0) * scale, page_h - s.get('y1', 0) * scale
+                x2, y2 = s.get('x2', 0) * scale, page_h - s.get('y2', 0) * scale
+                c.line(x1, y1, x2, y2)
+                if s.get('arrow'):
+                    # strelka uchi — yo'nalish bo'ylab ikki qanot
+                    import math as _math
+                    ang = _math.atan2(y2 - y1, x2 - x1)
+                    size = max(6, s.get('width', 3) * scale * 3)
+                    for da in (2.6, -2.6):
+                        c.line(
+                            x2, y2,
+                            x2 + size * _math.cos(ang + da),
+                            y2 + size * _math.sin(ang + da),
+                        )
+                continue
+            if kind == 'rect':
+                c.rect(
+                    s.get('x', 0) * scale,
+                    page_h - (s.get('y', 0) + s.get('h', 0)) * scale,
+                    s.get('w', 0) * scale, s.get('h', 0) * scale,
+                    stroke=1, fill=0,
+                )
+                continue
+            if kind == 'ellipse':
+                x0 = s.get('x', 0) * scale
+                y0 = page_h - (s.get('y', 0) + s.get('h', 0)) * scale
+                c.ellipse(x0, y0, x0 + s.get('w', 0) * scale, y0 + s.get('h', 0) * scale)
+                continue
+
             p = c.beginPath()
             pts = s.get('points') or []
             if len(pts) < 2:
                 continue
+            # Marker shaffofligi (highlighter)
+            opacity = s.get('opacity')
+            if opacity:
+                c.setStrokeAlpha(float(opacity))
             # PDF koordinatalari pastdan yuqoriga — y ni ag'daramiz
             p.moveTo(pts[0][0] * scale, page_h - pts[0][1] * scale)
             for x, y in pts[1:]:
                 p.lineTo(x * scale, page_h - y * scale)
             c.drawPath(p, stroke=1, fill=0)
+            if opacity:
+                c.setStrokeAlpha(1)
         c.showPage()
     c.save()
     return path

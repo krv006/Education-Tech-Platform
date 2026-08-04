@@ -31,6 +31,16 @@ rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
 ## Frontend integratsiyasi (alohida loyiha uchun shartnoma)
 
 - **Auth:** `POST /api/v1/auth/login/` → `{access, refresh}`; har so'rovda `Authorization: Bearer <access>`
+- **Doska real-time (WebSocket, polling KERAK EMAS):**
+  `wss://<domain>/ws/board/<lesson_id>/?token=<access>` — boshlang'ich holatni
+  REST `GET /board/<id>/` bilan oling, keyin faqat WS eventlarini qo'llang:
+  `{"type":"stroke","sheet",...}`, `{"type":"erase",...}`, `{"type":"sheet",...}`.
+  Chizishni WS orqali yuborish ham mumkin: `{"type":"stroke","sheet":0,"stroke":{...}}`
+- **Doska stroke turlari (hammasi saqlanadi va PDF'ga tushadi):**
+  qalam `{points,color,width,opacity?}` (opacity<1 = marker), matn
+  `{type:'text',text,x,y,size,color}`, chiziq/strelka
+  `{type:'line',x1,y1,x2,y2,arrow?}`, `{type:'rect',x,y,w,h}`,
+  `{type:'ellipse',x,y,w,h}`, formula `{type:'math',latex,...}` (faqat matematika)
 - **Chat real-time (WebSocket):** `wss://<domain>/ws/chat/<room_id>/?token=<access>`
   - Yopilish kodlari: `4401` token yaroqsiz, `4403` xonaga a'zo emas
   - Yuborish: `{"type":"message","text":"..."}` (yoki avvalgidek REST `POST .../send/` — ikkalasi ham broadcast bo'ladi)

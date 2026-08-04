@@ -11,6 +11,7 @@ ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
     'daphne',  # runserver'ni ASGI (WebSocket) qiladi — staticfiles'dan OLDIN turishi shart
+    'jazzmin',  # zamonaviy admin panel — django.contrib.admin'dan OLDIN
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -122,6 +123,49 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'UPDATE_LAST_LOGIN': True,
+}
+
+# ─── Jazzmin — admin panel ko'rinishi (Fokus brendi) ───
+JAZZMIN_SETTINGS = {
+    'site_title': 'Fokus admin',
+    'site_header': 'Fokus',
+    'site_brand': '🎯 Fokus',
+    'welcome_sign': 'Fokus — Boshqaruv paneli',
+    'search_model': ['accounts.User', 'lessons.Course'],
+    'topmenu_links': [
+        {'name': 'API docs', 'url': '/api/docs/', 'new_window': True},
+    ],
+    'icons': {
+        'accounts.User': 'fas fa-user',
+        'accounts.ParentChildLink': 'fas fa-people-arrows',
+        'accounts.Consent': 'fas fa-check-double',
+        'lessons.Course': 'fas fa-book',
+        'lessons.Lesson': 'fas fa-chalkboard-teacher',
+        'lessons.Enrollment': 'fas fa-user-plus',
+        'lessons.Attendance': 'fas fa-clipboard-check',
+        'lessons.AttentionCheck': 'fas fa-eye',
+        'lessons.FocusEvent': 'fas fa-door-open',
+        'lessons.LessonRecording': 'fas fa-video',
+        'chat.ChatRoom': 'fas fa-comments',
+        'chat.Message': 'fas fa-comment',
+        'chat.RoomRead': 'fas fa-check',
+        'board.BoardSheet': 'fas fa-chalkboard',
+        'board.BoardGrant': 'fas fa-hand-paper',
+        'board.BoardErase': 'fas fa-eraser',
+        'homework.Assignment': 'fas fa-tasks',
+        'homework.Submission': 'fas fa-file-upload',
+        'core.AuditLog': 'fas fa-shield-alt',
+    },
+    'order_with_respect_to': ['accounts', 'lessons', 'homework', 'chat', 'board', 'core'],
+    'related_modal_active': True,
+}
+JAZZMIN_UI_TWEAKS = {
+    'brand_colour': 'navbar-indigo',
+    'accent': 'accent-indigo',
+    'navbar': 'navbar-indigo navbar-dark',
+    'sidebar': 'sidebar-dark-indigo',
+    'theme': 'default',
+    'dark_mode_theme': None,
 }
 
 SPECTACULAR_SETTINGS = {

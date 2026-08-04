@@ -1,5 +1,5 @@
-"""Doska oqimi testlari — chizish ruxsati, o'chirish sababi, PDF -> chat."""
-from django.test import TestCase
+"""Doska oqimi testlari — chizish ruxsati, o'chirish sababi, PDF -> chat, WebSocket."""
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -175,3 +175,126 @@ class MathBoardTests(TestCase):
         self.assertIsNotNone(path)
         self.assertGreater(path.stat().st_size, 1000)
         path.unlink()
+
+
+class ShapeStrokeTests(TestCase):
+    """To'liq asboblar paneli: chiziq/strelka, to'rtburchak, ellips, marker —
+    hammasi saqlanadi va PDF'ga tushadi (front -> back -> PDF shartnomasi)."""
+
+    def setUp(self):
+        self.teacher = make('sh_t', User.Role.TEACHER)
+        course = Course.objects.create(teacher=self.teacher, title='SH', subject='Matematika')
+        chat_services.ensure_course_room(course)
+        self.lesson = Lesson.objects.create(
+            course=course, title='D', starts_at=timezone.now(), duration_min=45,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.teacher)
+
+    def post_stroke(self, stroke):
+        return self.client.post(
+            f'/api/v1/board/{self.lesson.id}/stroke/',
+            {'sheet': 0, 'stroke': stroke}, format='json',
+        )
+
+    def test_all_shape_types_accepted_and_pdf(self):
+        shapes = [
+            {'type': 'line', 'x1': 10, 'y1': 10, 'x2': 300, 'y2': 200, 'arrow': True, 'width': 4},
+            {'type': 'rect', 'x': 50, 'y': 60, 'w': 200, 'h': 120, 'color': '#2b6be4'},
+            {'type': 'ellipse', 'x': 300, 'y': 300, 'w': 150, 'h': 90},
+            {'points': [[0, 0], [50, 50], [90, 40]], 'opacity': 0.4, 'width': 12},  # marker
+            {'type': 'text', 'text': 'Salom 123 !@#', 'x': 20, 'y': 400},
+        ]
+        for shape in shapes:
+            r = self.post_stroke(shape)
+            self.assertEqual(r.status_code, 201, shape)
+        # marker shaffofligi saqlangan
+        board = self.client.get(f'/api/v1/board/{self.lesson.id}/').data
+        marker = [s for s in board['sheets'][0]['strokes'] if s.get('opacity')]
+        self.assertEqual(marker[0]['opacity'], 0.4)
+        # hammasi PDF bo'ladi
+        path = services.generate_pdf(self.lesson)
+        self.assertIsNotNone(path)
+        self.assertGreater(path.stat().st_size, 800)
+        path.unlink()
+
+    def test_bad_shape_rejected(self):
+        r = self.post_stroke({'type': 'line', 'x1': 'abc', 'y1': 0, 'x2': 5, 'y2': 5})
+        self.assertEqual(r.status_code, 400)
+
+
+class BoardWebSocketTests(TransactionTestCase):
+    """Doska real-time: REST/WS orqali chizilgani hammaga bir zumda boradi."""
+
+    def setUp(self):
+        self.teacher = make('bw_t', User.Role.TEACHER)
+        self.student = make('bw_s', User.Role.STUDENT)
+        self.stranger = make('bw_x', User.Role.STUDENT)
+        self.course = Course.objects.create(
+            teacher=self.teacher, title='BW', subject='Matematika',
+        )
+        chat_services.ensure_course_room(self.course)
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='D', starts_at=timezone.now(), duration_min=45,
+        )
+
+    def ws(self, user):
+        from channels.testing import WebsocketCommunicator
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        from root.asgi import application
+
+        token = str(AccessToken.for_user(user))
+        return WebsocketCommunicator(
+            application, f'/ws/board/{self.lesson.id}/?token={token}',
+        )
+
+    async def test_rest_stroke_broadcast_to_ws(self):
+        from channels.db import database_sync_to_async
+
+        comm = self.ws(self.student)
+        connected, _ = await comm.connect()
+        self.assertTrue(connected)
+        await database_sync_to_async(services.add_stroke)(
+            user=self.teacher, lesson_id=self.lesson.id, sheet_index=0, stroke=STROKE,
+        )
+        event = await comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'stroke')
+        self.assertEqual(event['sheet'], 0)
+        self.assertEqual(event['stroke']['color'], '#ff0000')
+        await comm.disconnect()
+
+    async def test_ws_stroke_write_and_broadcast(self):
+        from channels.db import database_sync_to_async
+
+        teacher_comm = self.ws(self.teacher)
+        student_comm = self.ws(self.student)
+        await teacher_comm.connect()
+        await student_comm.connect()
+        await teacher_comm.send_json_to({'type': 'stroke', 'sheet': 0, 'stroke': STROKE})
+        event = await student_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'stroke')
+        # bazaga ham yozildi (PDF uchun doimiy saqlanadi)
+        count = await database_sync_to_async(
+            lambda: len(self.lesson.board_sheets.get(index=0).strokes)
+        )()
+        self.assertEqual(count, 1)
+        await teacher_comm.disconnect()
+        await student_comm.disconnect()
+
+    async def test_student_without_grant_gets_error_via_ws(self):
+        comm = self.ws(self.student)
+        await comm.connect()
+        await comm.send_json_to({'type': 'stroke', 'sheet': 0, 'stroke': STROKE})
+        event = await comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'error')
+        await comm.disconnect()
+
+    async def test_stranger_rejected(self):
+        comm = self.ws(self.stranger)
+        connected, _ = await comm.connect()
+        self.assertFalse(connected)
+        await comm.disconnect()
