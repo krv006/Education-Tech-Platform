@@ -190,6 +190,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ─── Logging — konsol + FAYLLAR (logs/ papkasi, rotatsiya bilan) ───
+#   logs/app.log     — barcha INFO+ (so'rovlar, servislar)
+#   logs/errors.log  — faqat WARNING/ERROR (tez diagnostika uchun)
+# Har fayl 5 MB gacha, 5 tadan zaxira (jami ~50 MB chegara).
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -201,9 +208,39 @@ LOGGING = {
     },
     'handlers': {
         'console': {'class': 'logging.StreamHandler', 'formatter': 'app'},
+        'file_app': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_DIR / 'app.log'),
+            'maxBytes': 5 * 1024 * 1024,
+            'backupCount': 5,
+            'encoding': 'utf-8',
+            'formatter': 'app',
+            'level': 'INFO',
+        },
+        'file_errors': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_DIR / 'errors.log'),
+            'maxBytes': 5 * 1024 * 1024,
+            'backupCount': 5,
+            'encoding': 'utf-8',
+            'formatter': 'app',
+            'level': 'WARNING',
+        },
     },
     'loggers': {
-        'django': {'handlers': ['console'], 'level': 'INFO'},
-        'apps': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'django': {
+            'handlers': ['console', 'file_app', 'file_errors'],
+            'level': 'INFO',
+        },
+        'django.request': {
+            'handlers': ['console', 'file_app', 'file_errors'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console', 'file_app', 'file_errors'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }

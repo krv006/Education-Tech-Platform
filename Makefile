@@ -19,8 +19,14 @@ up:  ## Stack'ni ko'tarish (build bilan)
 down:  ## Stack'ni to'xtatish
 	$(COMPOSE) down
 
-logs:  ## Barcha loglarni kuzatish
+logs:  ## Barcha konteyner loglarini kuzatish
 	$(COMPOSE) logs -f
+
+applog:  ## Backend fayl logi (logs/app.log) — jonli kuzatish
+	$(COMPOSE) exec backend tail -n 100 -f logs/app.log
+
+errlog:  ## Faqat xatolar (logs/errors.log) — jonli kuzatish
+	$(COMPOSE) exec backend tail -n 100 -f logs/errors.log
 
 ps:  ## Servislar holati
 	$(COMPOSE) ps

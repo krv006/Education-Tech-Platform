@@ -4,6 +4,11 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.core.views import HealthView
 
+# Admin panel sarlavhalari
+admin.site.site_header = 'Fokus — Boshqaruv paneli'
+admin.site.site_title = 'Fokus admin'
+admin.site.index_title = "Platforma ma'lumotlari"
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', HealthView.as_view(), name='health'),

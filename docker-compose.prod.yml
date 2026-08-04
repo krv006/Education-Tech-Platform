@@ -49,6 +49,7 @@ services:
              gunicorn root.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 3 --timeout 60"
     volumes:
       - media:/app/media
+      - logs:/app/logs   # log fayllar konteyner qayta yaratilsa ham saqlanadi
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +81,7 @@ services:
 volumes:
   pgdata:
   media:
+  logs:
   caddy_data:
   caddy_config:
 
