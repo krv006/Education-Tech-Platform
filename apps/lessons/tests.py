@@ -212,3 +212,59 @@ class FocusSummaryTests(APITestCase):
 
         s = selectors.focus_summary(self.lesson, self.student)
         self.assertEqual(s, {'exits': 0, 'away_seconds': 0, 'longest_seconds': 0, 'timeline': []})
+
+
+class ParentSeesFocusTests(APITestCase):
+    """Fokus tahlili (chiqish-qaytish taymlayn) aynan o'sha bolaning
+    OTA-ONASIGA ko'rinadi; begona ota-onaga ko'rinmaydi."""
+
+    def setUp(self):
+        register(self.client, 'pf_t', 'teacher')
+        self.teacher_token = login(self.client, 'pf_t')
+
+        register(self.client, 'pf_p', 'parent')
+        self.parent_token = login(self.client, 'pf_p')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.parent_token}')
+        self.child_id = self.client.post(
+            '/api/v1/auth/children/', {'username': 'pf_s', 'password': PASSWORD},
+        ).json()['id']
+
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, FocusEvent, Lesson
+
+        teacher = User.objects.get(username='pf_t')
+        self.studentu = User.objects.get(username='pf_s')
+        course = Course.objects.create(teacher=teacher, title='PF')
+        Enrollment.objects.create(
+            course=course, student=self.studentu, status=Enrollment.Status.APPROVED,
+        )
+        lesson = Lesson.objects.create(
+            course=course, title='L', starts_at=timezone.now(), duration_min=45,
+        )
+        Attendance.objects.create(lesson=lesson, student=self.studentu, joined_at=timezone.now())
+        t0 = timezone.now()
+        for kind, at in [('exit', t0), ('return', t0 + timedelta(seconds=45))]:
+            e = FocusEvent.objects.create(lesson=lesson, student=self.studentu, kind=kind)
+            FocusEvent.objects.filter(pk=e.pk).update(created_at=at)
+
+    def test_parent_sees_child_focus_timeline(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.parent_token}')
+        rows = self.client.get('/api/v1/attendance/').json()['results']
+        self.assertEqual(len(rows), 1)
+        focus = rows[0]['focus']
+        self.assertEqual(focus['exits'], 1)
+        self.assertEqual(focus['away_seconds'], 45)
+        self.assertEqual(len(focus['timeline']), 1)
+        self.assertIsNotNone(focus['timeline'][0]['returned_at'])
+
+    def test_other_parent_sees_nothing(self):
+        register(self.client, 'pf_p2', 'parent')
+        p2 = login(self.client, 'pf_p2')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {p2}')
+        rows = self.client.get('/api/v1/attendance/').json()['results']
+        self.assertEqual(len(rows), 0)
