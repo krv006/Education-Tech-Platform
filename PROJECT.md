@@ -16,10 +16,12 @@ loyihada rivojlantiriladi va shu API'ni chaqiradi.
 | Qatlam | Texnologiya |
 |---|---|
 | Backend | Django 6 + DRF + SimpleJWT (ASGI) |
-| Real-time chat | Django Channels 4 + Redis channel layer (WebSocket) |
-| Video darslar | LiveKit (self-hosted, WebRTC) |
+| Real-time (chat + doska) | Django Channels 4 + Redis channel layer (WebSocket) |
+| Video darslar | LiveKit (self-hosted, WebRTC) + Egress (dars yozuvi MP4) |
 | AI tekshiruv | Google Gemini (`google-generativeai`) |
 | DB / Cache | PostgreSQL 17 / Redis 7 (dev'da sqlite/in-memory fallback) |
+| Admin panel | Django admin + **Jazzmin** (Fokus brendi, ikonkalar) |
+| Loglar | Fayl rotatsiya: `logs/app.log`, `logs/errors.log` (`make applog/errlog`) |
 | Server | Docker Compose: gunicorn+uvicorn worker, Caddy (TLS + proxy) |
 
 ## 2. Arxitektura
@@ -27,11 +29,12 @@ loyihada rivojlantiriladi va shu API'ni chaqiradi.
 ```
 Internet ──443──> Caddy (TLS avto, Let's Encrypt)
                    ├── /api, /admin, /static -> backend:8000 (gunicorn/uvicorn, ASGI)
-                   ├── /ws/*                 -> backend:8000 (chat WebSocket)
+                   ├── /ws/*                 -> backend:8000 (chat + doska WebSocket)
                    ├── /media                -> umumiy volume
                    ├── /livekit              -> livekit:7880 (WebRTC signaling)
                    └── /                     -> 302 /api/docs/
 Internet ──7881/tcp, 50000-50100/udp──> LiveKit (WebRTC media)
+egress (konteyner) ──> darsni MP4 ga yozadi -> recordings volume -> backend auth stream
 test-admin-api.navigocrm.com ──> navigo tarmog'idagi nginx (boshqa loyiha, shu Caddy orqali)
 ```
 
@@ -47,7 +50,7 @@ Kod qatlamlari (ARCHITECTURE.md qoidasi): `views.py` yupqa → biznes-logika
 | `apps/lessons` | Kurs, dars jadvali, yozilish (enroll), davomat hisoboti | `/api/v1/courses/`, `/api/v1/lessons/`, `/api/v1/attendance/` |
 | `apps/live` | LiveKit token, avtomatik davomat (kirdi/chiqdi), "Siz shu yerdamisiz?" diqqat tekshiruvi (random, 15s), fokus jurnali (oynadan chiqib-kirish) | `/api/v1/live/*` |
 | `apps/chat` | Telegram uslubi: har kurs = guruh chat; direct faqat o'qituvchi↔o'quvchi (1 martalik so'rov → qabul/block); real-time WebSocket | `/api/v1/chat/*`, `ws /ws/chat/<room_id>/` |
-| `apps/board` | Jonli dars doskasi: chizish, matn bloklari, bir nechta sheet, o'chirish SABABI majburiy (jurnal), dars tugagach PDF → kurs chatiga. **Matematik rejim FAQAT matematika kurslarida** (`math_enabled` bayrog'i): MathLive LaTeX formula bloklari (`type:'math'`, PDF'da render bo'ladi) va SymPy yechuvchi | `/api/v1/board/<lesson_id>/*` |
+| `apps/board` | Jonli dars doskasi, **real-time WebSocket** (polling yo'q): qalam, marker (shaffof), chiziq/strelka, to'rtburchak, ellips, matn — bari saqlanadi va PDF'ga tushadi; bir nechta sheet; o'chirish SABABI majburiy (jurnal); dars tugagach PDF → kurs chatiga. **Matematik rejim FAQAT matematika kurslarida** (`math_enabled`): MathLive LaTeX bloklari + SymPy yechuvchi | `/api/v1/board/<lesson_id>/*`, `ws /ws/board/<lesson_id>/` |
 | `apps/homework` | AI uy vazifasi: o'qituvchi vazifani rich-matn (sanitized HTML) yoki fayl (Word/PDF/rasm) bilan beradi, muddat qo'yadi; o'quvchi PDF/rasm/DOCX (Speaking'da audio) topshiradi; Gemini savolma-savol O'ZBEKCHA baholaydi; statistika, kech topshirish belgisi | `/api/v1/homework/*` |
 | `apps/core` | UUID+timestamp baza modellari, soft-delete, RBAC, audit log, yagona xato formati | — |
 
@@ -61,11 +64,12 @@ Kod qatlamlari (ARCHITECTURE.md qoidasi): `views.py` yupqa → biznes-logika
   fokus jurnali, vazifa natijalarini ko'rish
 - To'liq matritsa: `apps/core/permissions.py` (`ROLE_PERMISSIONS`)
 
-## 5. Real-time chat (WebSocket)
+## 5. Real-time (WebSocket)
 
-```
-wss://<domain>/ws/chat/<room_id>/?token=<JWT access>
-```
+Ikkala kanal ham JWT bilan: `?token=<access>`. Yopilish kodlari: `4401` token
+yaroqsiz, `4403` a'zo emas.
+
+### 5.1 Chat — `wss://<domain>/ws/chat/<room_id>/`
 
 | Yo'nalish | Payload | Izoh |
 |---|---|---|
@@ -74,6 +78,27 @@ wss://<domain>/ws/chat/<room_id>/?token=<JWT access>
 | S→C | `{"type":"message","message":{id,room,sender,text,created_at}}` | Yangi xabar (REST orqali yuborilgani ham keladi) |
 | S→C | `{"type":"typing","user_id","name"}` | Kimdir yozmoqda (o'zingizni filtrlang) |
 | S→C | `{"type":"error","detail"}` | Yuborish xatosi |
+
+### 5.2 Doska — `wss://<domain>/ws/board/<lesson_id>/` (polling KERAK EMAS)
+
+Boshlang'ich holat: REST `GET /api/v1/board/<lesson_id>/`, keyin faqat WS.
+
+| Yo'nalish | Payload |
+|---|---|
+| C→S | `{"type":"stroke","sheet":0,"stroke":{...}}` — element qo'shish (REST bilan teng kuchli) |
+| S→C | `{"type":"stroke","sheet","stroke"}` / `{"type":"erase","sheet","stroke_ids","by","reason"}` / `{"type":"sheet","index"}` / `{"type":"error","detail"}` |
+
+### 5.3 Doska stroke turlari (bari doimiy saqlanadi va PDF'ga tushadi)
+
+| Asbob | Format |
+|---|---|
+| Qalam | `{points:[[x,y],...], color, width}` |
+| Marker (shaffof) | `{points, ..., opacity: 0.4}` |
+| Chiziq / strelka | `{type:'line', x1,y1,x2,y2, arrow?:true, color, width}` |
+| To'rtburchak | `{type:'rect', x,y,w,h, color, width}` |
+| Ellips | `{type:'ellipse', x,y,w,h, color, width}` |
+| Matn/raqam | `{type:'text', text, x,y, size, color}` |
+| Formula (MathLive) | `{type:'math', latex, x,y, size, color}` — faqat `math_enabled` kurslarda |
 
 Yopilish kodlari: `4401` — token yaroqsiz, `4403` — xonaga a'zo emas.
 Tarix va o'qilgan belgisi REST'da: `GET .../messages/`, `POST .../read/`.
@@ -130,9 +155,13 @@ Birinchi o'rnatish: `bash scripts/deploy.sh`. Lokaldan: `bash scripts/deploy-rem
 python manage.py test            # hammasi
 python manage.py test apps.chat apps.board apps.homework
 ```
-Qamrov: chat oqimi + 5 ta WebSocket testi (JWT, ruxsat, broadcast, typing),
-doska (ruxsat/o'chirish sababi/PDF), homework (24 test — AI mock, RBAC, fayllar),
-davomat/auth oqimlari. AI chaqiruvi testlarda mock — kalit kerak emas.
+Qamrov: chat (REST + 5 WS testi), doska (ruxsat/o'chirish sababi/PDF/shakllar/
+MathLive cheklovi + 4 WS testi), homework (AI mock, RBAC, fayllar, statistika),
+davomat + fokus tahlili, video yozuv (nom/chat/stream/ruxsat), login jurnali.
+AI/egress chaqiruvlari testlarda mock yoki o'chirilgan — tashqi servis kerak emas.
+
+Prod'ga o'xshash muhitda (DEBUG=False + manifest static) lokal tekshirish:
+`DJANGO_SETTINGS_MODULE=root.settings.stagetest python manage.py runserver`
 
 ## 10. EduTech.docx talablar holati
 

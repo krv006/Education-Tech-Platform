@@ -10,12 +10,20 @@ Frontend domenini `.env` dagi `CORS_ALLOWED_ORIGINS` ga qo'shishni unutmang.
 ```
 Internet ──443──> Caddy (TLS avto, Let's Encrypt)
                    ├── /            -> 302 /api/docs/ (frontend bu yerda emas)
-                   ├── /api, /admin -> backend:8000 (gunicorn)
+                   ├── /api, /admin -> backend:8000 (gunicorn + uvicorn worker, ASGI)
+                   ├── /ws          -> backend:8000 (chat + doska WebSocket)
                    ├── /static      -> backend (whitenoise)
                    ├── /media       -> umumiy volume (file_server)
                    └── /livekit     -> livekit:7880 (WebSocket signaling)
 Internet ──7881/tcp, 50000-50100/udp──> LiveKit (WebRTC media, to'g'ridan-to'g'ri)
+egress ──> dars videosini MP4 ga yozadi -> `recordings` volume (backend auth stream beradi)
 ```
+
+Volume'lar: `pgdata` (DB), `media` (yuklamalar), `logs` (app/errors loglari),
+`recordings` (dars videolari), `caddy_data/config` (TLS sertifikatlar).
+
+Loglarni ko'rish: `make applog` (hammasi), `make errlog` (faqat xatolar),
+`make logs` (konteyner loglari).
 
 ## 1. DNS
 

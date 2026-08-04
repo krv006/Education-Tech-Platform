@@ -19,7 +19,8 @@ MIDDLEWARE.insert(  # noqa: F405
 )
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
-    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+    # Kechirimli manifest — Jazzmin'ning papka-static so'rovi 500 bermasin
+    'staticfiles': {'BACKEND': 'apps.core.staticfiles.ForgivingManifestStaticFilesStorage'},
 }
 
 # Base'dagi ro'yxat saqlanadi, .env dagilar USTIGA qo'shiladi (almashtirmaydi)
