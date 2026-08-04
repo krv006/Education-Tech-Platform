@@ -49,6 +49,33 @@ rozilikka asoslangan ota-ona paneli. O'zbekiston bozori uchun.
   - Tarix/o'qilgan belgisi avvalgidek REST orqali (`GET .../messages/`, `POST .../read/`)
 - **Hujjatlar:** `/api/docs/` (Swagger UI), `/api/schema/` (OpenAPI — client generatsiya qilsa bo'ladi)
 - **LiveKit:** token `POST /api/v1/live/token/` (`{lesson_id}`), ulanish `wss://<domain>/livekit`
+- **LiveKit optimizatsiya (MAJBURIY frontend sozlamalari)** — trafik/CPU bir
+  necha barobar kamayadi:
+
+  ```js
+  import { Room, VideoPresets } from 'livekit-client';
+
+  const room = new Room({
+    // (2) Ko'rinmagan video umuman kelmaydi, kichik plitkaga kichik layer:
+    adaptiveStream: true,
+    // (1+2) Hech kim obuna bo'lmagan layerni PUBLISHER o'chiradi:
+    dynacast: true,
+    // Kamera 540p yetadi (plitkalar kichik) — 720p+ shart emas:
+    videoCaptureDefaults: { resolution: VideoPresets.h540.resolution },
+    publishDefaults: {
+      // (1) Simulcast: har kamera 3 o'lchamda (katta/o'rta/kichik):
+      simulcast: true,
+      videoSimulcastLayers: [VideoPresets.h90, VideoPresets.h216],
+    },
+  });
+  ```
+
+  - **(3) Layout:** teng grid EMAS — spiker/o'qituvchi katta, qolganlar kichik
+    thumbnail qatorda (`@livekit/components-react` da `FocusLayout` +
+    `CarouselLayout`). Plitka kichik bo'lsa `adaptiveStream` avtomatik past
+    layerga tushadi — 1 va 2-band o'z-o'zidan kuchliroq ishlaydi
+  - Video elementlarni DOMdan olib tashlamang/`display:none` qiling —
+    `adaptiveStream` ko'rinmaslikni o'zi aniqlab oqimni to'xtatadi
 - **Doska PDF havolasi:** dars tugaganda backend kurs chatiga `"... /boards/<lesson_id>"`
   matnli xabar yuboradi — frontend shu yo'l uchun sahifa qilishi kerak
   (doska ma'lumoti: `GET /api/v1/board/<lesson_id>/`, PDF: `.../pdf/`)

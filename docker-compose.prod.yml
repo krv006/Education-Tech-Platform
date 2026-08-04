@@ -21,6 +21,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # RAM chegarasi — channels/cache kalitlari TTL'li, volatile-ttl xavfsiz
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-ttl
 
   livekit:
     image: livekit/livekit-server:latest
@@ -55,6 +57,10 @@ services:
       - recordings:/out
     # Chrome asosidagi kompozitor uchun katta /dev/shm kerak
     shm_size: 1gb
+    # Egress eng "och" konteyner — chegara qo'yamiz, API/darslarga
+    # CPU yetmay qolmasin (yozuv sekinlashsa ham dars sekinlashmaydi)
+    cpus: 2
+    mem_limit: 2g
     depends_on:
       - redis
       - livekit

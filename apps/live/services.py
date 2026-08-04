@@ -234,7 +234,11 @@ def start_recording(*, lesson: Lesson) -> None:
 
 
 async def _egress_start(room_name: str, file_name: str) -> str:
-    from livekit.protocol.egress import EncodedFileOutput, RoomCompositeEgressRequest
+    from livekit.protocol.egress import (
+        EncodedFileOutput,
+        EncodingOptionsPreset,
+        RoomCompositeEgressRequest,
+    )
 
     client = LiveKitAPI(
         url=_livekit_http_url(),
@@ -246,6 +250,9 @@ async def _egress_start(room_name: str, file_name: str) -> str:
             room_name=room_name,
             layout='speaker',
             audio_only=False,
+            # 720p/30 — default 1080p o'rniga: egress (Chrome kompozitor)
+            # CPU/RAM'ni ~2x kam yeydi, dars yozuvi uchun sifat yetarli
+            preset=EncodingOptionsPreset.H264_720P_30,
             file_outputs=[EncodedFileOutput(
                 filepath=f'{settings.EGRESS_OUTPUT_PREFIX}/{file_name}',
             )],

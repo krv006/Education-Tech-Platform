@@ -188,7 +188,18 @@ Prod'ga o'xshash muhitda (DEBUG=False + manifest static) lokal tekshirish:
   o'zgarish bayroqlari (`new_ip`, `new_device`); tarix: `GET /auth/logins/`
   (o'ziniki), ota-ona `?student=<id>` bilan bolasiniki
 
-## 11. Keyingi qadamlar
+## 11. LiveKit resurs optimizatsiyasi
+
+- **Simulcast** (har kamera 3 o'lcham) + **adaptiveStream** (ko'rinmagan video
+  to'xtaydi, plitka o'lchamiga mos layer) + **dynacast** (keraksiz layerni
+  publisher o'chiradi) — frontend Room sozlamalari, tayyor kod README'da
+- **Layout:** spiker katta / qolganlar thumbnail — grid emas (shunda yuqoridagilar
+  maksimal ishlaydi)
+- **Server tomonda:** egress 720p/30 preset (CPU ~2x kam), egress konteyneriga
+  `cpus:2, mem_limit:2g` chegara, bo'sh xona 5 daqiqada yopiladi
+  (`empty_timeout`), Redis `maxmemory 256mb volatile-ttl`
+
+## 12. Keyingi qadamlar
 
 1. Desktop app (Electron qobiq): skrinshot-himoya + ikkinchi ekran nazorati + kiosk
 2. Video ustiga o'quvchi ismli watermark

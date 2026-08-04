@@ -12,5 +12,10 @@ rtc:
 # Egress (dars video yozuvi) server bilan Redis orqali gaplashadi
 redis:
   address: redis:6379
+# Resurs tejash: bo'sh xona 5 daqiqada yopiladi (RAM bo'shaydi),
+# hamma chiqib ketgach 20 soniyada yakunlanadi
+room:
+  empty_timeout: 300
+  departure_timeout: 20
 logging:
   level: info
