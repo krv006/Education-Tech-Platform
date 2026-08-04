@@ -44,6 +44,55 @@ def lessons_for(user: User) -> QuerySet[Lesson]:
     return qs
 
 
+def focus_summary(lesson, student) -> dict:
+    """Fokus jurnalidan chiqish-qaytish TAHLILI (EduTech.docx: ota-ona nazorati).
+
+    Har bir `exit` keyingi `return` bilan juftlanadi:
+      - jami tashqarida bo'lgan vaqt (sekund)
+      - eng uzun yo'qlik (sekund)
+      - to'liq taymlayn: qachon chiqdi, qachon qaytdi, qancha turdi
+    Qaytmagan chiqish (dars oxirigacha) taymlaynda `returned_at: null` bo'ladi
+    va davomiyligi chegara sifatida dars tugashi/`left_at` gacha hisoblanadi.
+    """
+    events = list(
+        lesson.focus_events.filter(student=student).order_by('created_at')
+        .values_list('kind', 'created_at')
+    )
+    timeline = []
+    total = 0.0
+    longest = 0.0
+    open_exit = None
+    for kind, at in events:
+        if kind == 'exit' and open_exit is None:
+            open_exit = at
+        elif kind == 'return' and open_exit is not None:
+            seconds = max(0.0, (at - open_exit).total_seconds())
+            timeline.append({
+                'left_at': open_exit, 'returned_at': at, 'seconds': round(seconds),
+            })
+            total += seconds
+            longest = max(longest, seconds)
+            open_exit = None
+    if open_exit is not None:
+        # qaytmadi — davomiyligi darsdan chiqqan/dars tugagan vaqtgacha
+        att = lesson.attendances.filter(student=student).first()
+        end = (att.left_at if att and att.left_at else None)
+        seconds = max(0.0, (end - open_exit).total_seconds()) if end else None
+        timeline.append({
+            'left_at': open_exit, 'returned_at': None,
+            'seconds': round(seconds) if seconds is not None else None,
+        })
+        if seconds:
+            total += seconds
+            longest = max(longest, seconds)
+    return {
+        'exits': sum(1 for k, _ in events if k == 'exit'),
+        'away_seconds': round(total),
+        'longest_seconds': round(longest),
+        'timeline': timeline,
+    }
+
+
 def attendance_for(user: User) -> QuerySet[Attendance]:
     qs = Attendance.objects.select_related('lesson', 'student')
     if user.role == User.Role.TEACHER:

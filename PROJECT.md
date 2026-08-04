@@ -140,7 +140,10 @@ davomat/auth oqimlari. AI chaqiruvi testlarda mock — kalit kerak emas.
 - ✅ Kurs = guruh chat; o'quvchilar orasida DM yo'q
 - ✅ Random diqqat tekshiruvi (3-5 marta, 15s, vaqti sirlangan)
 - ✅ Doska: ruxsat so'rash, chizish, sheet'lar, sababli o'chirish, PDF→chat, faqat platformada
-- ✅ Fokus jurnali (oynadan chiqib-kirish — ota-onaga)
+- ✅ Fokus jurnali (oynadan chiqib-kirish — ota-onaga): necha marta chiqdi,
+  HAR BIR chiqishda qancha turdi, qachon qaytdi, jami/eng uzun yo'qlik —
+  davomat hisobotidagi `focus` maydonida (`exits`, `away_seconds`,
+  `longest_seconds`, `timeline[{left_at, returned_at, seconds}]`)
 - ✅ AI uy vazifasi (qo'shimcha talab sifatida qo'shildi)
 - ⚠️ Skrinshot/screenrecord taqiqlash — brauzerda IMKONSIZ; yechim: desktop app
   (Electron `setContentProtection`) yoki mobil ilova (`FLAG_SECURE`) — reja

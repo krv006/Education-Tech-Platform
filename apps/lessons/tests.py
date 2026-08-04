@@ -138,3 +138,77 @@ class CourseLessonFlowTests(APITestCase):
         from .models import Course
         self.assertFalse(Course.objects.filter(pk=self.course_id).exists())
         self.assertTrue(Course.all_objects.filter(pk=self.course_id).exists())
+
+
+class FocusSummaryTests(APITestCase):
+    """Chiqish-qaytish tahlili: juftlash, jami/eng uzun vaqt, taymlayn."""
+
+    def setUp(self):
+        from apps.accounts.models import User
+
+        self.teacher = User(username='fs_t', role=User.Role.TEACHER)
+        self.teacher.set_password('x')
+        self.teacher.save()
+        self.student = User(username='fs_s', role=User.Role.STUDENT)
+        self.student.set_password('x')
+        self.student.save()
+        from django.utils import timezone
+
+        from .models import Course, Lesson
+
+        course = Course.objects.create(teacher=self.teacher, title='F')
+        self.lesson = Lesson.objects.create(
+            course=course, title='L', starts_at=timezone.now(), duration_min=45,
+        )
+
+    def _event(self, kind, at):
+        from .models import FocusEvent
+
+        e = FocusEvent.objects.create(lesson=self.lesson, student=self.student, kind=kind)
+        # auto_now_add ni chetlab, vaqtni aniq boshqaramiz
+        FocusEvent.objects.filter(pk=e.pk).update(created_at=at)
+
+    def test_pairs_and_totals(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from . import selectors
+
+        t0 = timezone.now()
+        self._event('exit', t0)                                  # 1-chiqish: 30s
+        self._event('return', t0 + timedelta(seconds=30))
+        self._event('exit', t0 + timedelta(seconds=100))         # 2-chiqish: 120s
+        self._event('return', t0 + timedelta(seconds=220))
+        s = selectors.focus_summary(self.lesson, self.student)
+        self.assertEqual(s['exits'], 2)
+        self.assertEqual(s['away_seconds'], 150)
+        self.assertEqual(s['longest_seconds'], 120)
+        self.assertEqual(len(s['timeline']), 2)
+        self.assertEqual(s['timeline'][0]['seconds'], 30)
+        self.assertEqual(s['timeline'][1]['seconds'], 120)
+
+    def test_unreturned_exit_capped_by_left_at(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from . import selectors
+        from .models import Attendance
+
+        t0 = timezone.now()
+        self._event('exit', t0)
+        Attendance.objects.create(
+            lesson=self.lesson, student=self.student,
+            joined_at=t0 - timedelta(minutes=10), left_at=t0 + timedelta(seconds=60),
+        )
+        s = selectors.focus_summary(self.lesson, self.student)
+        self.assertEqual(s['exits'], 1)
+        self.assertEqual(s['away_seconds'], 60)
+        self.assertIsNone(s['timeline'][0]['returned_at'])
+
+    def test_empty(self):
+        from . import selectors
+
+        s = selectors.focus_summary(self.lesson, self.student)
+        self.assertEqual(s, {'exits': 0, 'away_seconds': 0, 'longest_seconds': 0, 'timeline': []})

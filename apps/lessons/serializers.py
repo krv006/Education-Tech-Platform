@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
 
+from . import selectors
 from .models import Attendance, Course, Enrollment, Lesson
 
 
@@ -58,12 +59,13 @@ class AttendanceSerializer(serializers.ModelSerializer):
     attention_total = serializers.SerializerMethodField()
     attention_answered = serializers.SerializerMethodField()
     focus_exits = serializers.SerializerMethodField()
+    focus = serializers.SerializerMethodField()
 
     class Meta:
         model = Attendance
         fields = [
             'id', 'lesson', 'lesson_title', 'student', 'joined_at', 'left_at', 'minutes',
-            'attention_total', 'attention_answered', 'focus_exits',
+            'attention_total', 'attention_answered', 'focus_exits', 'focus',
         ]
 
     def get_attention_total(self, obj) -> int:
@@ -77,3 +79,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
     def get_focus_exits(self, obj) -> int:
         """O'quvchi dars davomida necha marta oynadan chiqib ketgani (anti-cheat)."""
         return obj.lesson.focus_events.filter(student=obj.student, kind='exit').count()
+
+    def get_focus(self, obj) -> dict:
+        """Chiqish-qaytish tahlili: jami/eng uzun yo'qlik + taymlayn
+        (qachon chiqdi, qachon qaytdi, necha sekund turdi)."""
+        return selectors.focus_summary(obj.lesson, obj.student)
