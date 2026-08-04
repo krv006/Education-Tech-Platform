@@ -7,6 +7,7 @@ from django.db.models import (
     CharField,
     DateTimeField,
     ForeignKey,
+    OneToOneField,
     PositiveIntegerField,
     TextChoices,
     TextField,
@@ -119,6 +120,36 @@ class FocusEvent(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} · {self.kind} · {self.created_at:%H:%M:%S}'
+
+
+class LessonRecording(TimeStampedUUIDModel):
+    """Dars video yozuvi (EduTech.docx: "video zapis avtomatik saqlansin").
+
+    LiveKit Egress dars LIVE bo'lganda yozishni boshlaydi, dars/xona
+    tugaganda faylga yakunlaydi. Fayl `recordings` volume'ida turadi va
+    FAQAT auth endpoint orqali beriladi. O'qituvchi guruhni (kursni)
+    o'chirmaguncha saqlanadi.
+    """
+
+    class Status(TextChoices):
+        RECORDING = 'recording', 'Yozilmoqda'
+        COMPLETED = 'completed', 'Tayyor'
+        FAILED = 'failed', 'Xatolik'
+
+    lesson = OneToOneField('lessons.Lesson', CASCADE, related_name='recording')
+    # O'qituvchi dars tugatishda beradigan nom — chatga shu nom bilan tushadi
+    title = CharField(max_length=200, blank=True)
+    egress_id = CharField(max_length=64, blank=True)
+    file_name = CharField(max_length=255, blank=True)
+    status = CharField(max_length=10, choices=Status.choices, default=Status.RECORDING)
+    error = TextField(blank=True)
+    ended_at = DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.lesson.title} [{self.status}]'
 
 
 class Attendance(TimeStampedUUIDModel):

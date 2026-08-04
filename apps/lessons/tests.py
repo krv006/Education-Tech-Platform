@@ -268,3 +268,104 @@ class ParentSeesFocusTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {p2}')
         rows = self.client.get('/api/v1/attendance/').json()['results']
         self.assertEqual(len(rows), 0)
+
+
+class RecordingTests(APITestCase):
+    """Dars video yozuvi: nom berish + chat e'loni, faqat-platforma stream,
+    ruxsatlar, o'chirish."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson, LessonRecording
+
+        self.tmp = tempfile.mkdtemp()
+        self._override = override_settings(RECORDINGS_DIR=Path(self.tmp))
+        self._override.enable()
+        self.addCleanup(self._override.disable)
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('rc_t', User.Role.TEACHER)
+        self.student = mk('rc_s', User.Role.STUDENT)
+        self.stranger = mk('rc_x', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='RC')
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='Yozuvli dars',
+            starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+        # Egress yozgan faylni imitatsiya qilamiz
+        self.recording = LessonRecording.objects.create(
+            lesson=self.lesson, file_name=f'{self.lesson.room_name}.mp4',
+        )
+        (Path(self.tmp) / self.recording.file_name).write_bytes(b'\x00' * 2048)
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def test_finish_names_recording_and_posts_to_chat(self):
+        from apps.chat.models import Message
+
+        from . import services as lesson_services
+        lesson_services.finish_lesson(
+            teacher=self.teacher, lesson=self.lesson,
+            recording_title='Kvadrat tenglamalar (video)',
+        )
+        self.recording.refresh_from_db()
+        self.assertEqual(self.recording.title, 'Kvadrat tenglamalar (video)')
+        msg = Message.objects.filter(text__contains='/recordings/').latest('created_at')
+        self.assertIn('Kvadrat tenglamalar (video)', msg.text)
+        self.assertIn(str(self.lesson.id), msg.text)
+
+    def test_info_gives_stream_url_to_member_only(self):
+        r = self.api(self.student).get(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data['ready'])
+        self.assertIn('/recording/stream/?t=', r.data['stream_url'])
+        # begona: dars queryset'ida yo'q — 404 (mavjudligi ham oshkor bo'lmaydi)
+        r = self.api(self.stranger).get(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        self.assertEqual(r.status_code, 404)
+
+    def test_stream_requires_valid_token(self):
+        info = self.api(self.student).get(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        url = info.data['stream_url']
+        from rest_framework.test import APIClient
+
+        anon = APIClient()  # token URLda — auth header kerak emas
+        r = anon.get(url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r['Content-Disposition'], 'inline')
+        # Range (seek) ishlaydi
+        r = anon.get(url, HTTP_RANGE='bytes=100-199')
+        self.assertEqual(r.status_code, 206)
+        self.assertEqual(r['Content-Length'], '100')
+        # buzilgan token — yo'q
+        r = anon.get(f'/api/v1/lessons/{self.lesson.id}/recording/stream/?t=soxta')
+        self.assertEqual(r.status_code, 403)
+
+    def test_delete_teacher_only(self):
+        r = self.api(self.student).delete(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.teacher).delete(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        self.assertEqual(r.status_code, 204)
+        from pathlib import Path
+
+        self.assertFalse((Path(self.tmp) / f'{self.lesson.room_name}.mp4').exists())

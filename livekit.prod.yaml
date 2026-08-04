@@ -9,5 +9,8 @@ rtc:
   # Serverning tashqi IP sini STUN orqali avtomatik aniqlaydi.
   # Ishlamasa: docker-compose.prod.yml da command ga --node-ip <SERVER_PUBLIC_IP> qo'shing.
   use_external_ip: true
+# Egress (dars video yozuvi) server bilan Redis orqali gaplashadi
+redis:
+  address: redis:6379
 logging:
   level: info

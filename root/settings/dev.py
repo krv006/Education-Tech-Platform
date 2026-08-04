@@ -5,9 +5,11 @@ import sys
 from .base import *  # noqa: F401,F403
 from .base import BASE_DIR, REST_FRAMEWORK
 
-# Test rejimida throttle xalaqit bermasin
+# Test rejimida throttle xalaqit bermasin va video yozuv avto-start
+# (fon thread + tarmoq) o'chib turadi
 if 'test' in sys.argv:
     REST_FRAMEWORK = {**REST_FRAMEWORK, 'DEFAULT_THROTTLE_CLASSES': []}
+    RECORDINGS_AUTO_START = False
 
 DEBUG = os.getenv('DEBUG', 'true').lower() == 'true'
 

@@ -61,6 +61,9 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     if is_teacher and lesson.status == Lesson.Status.SCHEDULED:
         lesson.status = Lesson.Status.LIVE
         lesson.save(update_fields=['status'])
+        # Video yozuv avtomatik boshlanadi (EduTech.docx) — fonda, xatosi
+        # darsga xalaqit bermaydi
+        start_recording(lesson=lesson)
     if user.role == User.Role.STUDENT:
         lesson_services.mark_joined(lesson=lesson, student=user)
         _ensure_attention_schedule(lesson=lesson, student=user)
@@ -185,3 +188,100 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
         meta={'identity': identity}, request=request,
     )
     return True
+
+
+# ── Dars video yozuvi (LiveKit Egress) ─────────────────────────────────────
+# EduTech.docx: "dars video zapisi avtomatik saqlansin — o'qituvchi guruhni
+# o'chirmaguncha". Dars LIVE bo'lganda yozish boshlanadi, dars tugaganda
+# (yoki xona bo'shaganda egress o'zi) yakunlanadi. Fayl recordings
+# volume'ida; faqat auth endpoint orqali beriladi (apps/lessons).
+
+def start_recording(*, lesson: Lesson) -> None:
+    """Room composite egress'ni fonda boshlaydi. Xato dars oqimini buzmaydi
+    (masalan, dev muhitida egress konteyneri yo'q bo'lsa status=failed)."""
+    import logging
+    import threading
+
+    from apps.lessons.models import LessonRecording
+
+    if not getattr(settings, 'RECORDINGS_AUTO_START', True):
+        return  # testlarda o'chirilgan (fon thread + tarmoq kerak emas)
+
+    recording, created = LessonRecording.objects.get_or_create(lesson=lesson)
+    if not created and recording.egress_id:
+        return  # allaqachon yozilyapti
+
+    file_name = f'{lesson.room_name}.mp4'
+
+    def _target():
+        from django.db import close_old_connections
+
+        try:
+            egress_id = asyncio.run(_egress_start(lesson.room_name, file_name))
+            LessonRecording.objects.filter(pk=recording.pk).update(
+                egress_id=egress_id, file_name=file_name,
+                status=LessonRecording.Status.RECORDING, error='',
+            )
+        except Exception as exc:  # egress yo'q/ulanmadi — jurnalga yozamiz
+            logging.getLogger('apps').warning('egress start failed: %s', exc)
+            LessonRecording.objects.filter(pk=recording.pk).update(
+                status=LessonRecording.Status.FAILED, error=str(exc)[:500],
+            )
+        finally:
+            close_old_connections()
+
+    threading.Thread(target=_target, daemon=True).start()
+
+
+async def _egress_start(room_name: str, file_name: str) -> str:
+    from livekit.protocol.egress import EncodedFileOutput, RoomCompositeEgressRequest
+
+    client = LiveKitAPI(
+        url=_livekit_http_url(),
+        api_key=settings.LIVEKIT_API_KEY,
+        api_secret=settings.LIVEKIT_API_SECRET,
+    )
+    try:
+        info = await client.egress.start_room_composite_egress(RoomCompositeEgressRequest(
+            room_name=room_name,
+            layout='speaker',
+            audio_only=False,
+            file_outputs=[EncodedFileOutput(
+                filepath=f'{settings.EGRESS_OUTPUT_PREFIX}/{file_name}',
+            )],
+        ))
+        return info.egress_id
+    finally:
+        await client.aclose()
+
+
+def stop_recording(*, lesson: Lesson) -> None:
+    """Darsni yakunlashda egress'ni to'xtatadi (best-effort — xona bo'shasa
+    egress baribir o'zi yakunlaydi)."""
+    import logging
+
+    from apps.lessons.models import LessonRecording
+
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None or not recording.egress_id:
+        return
+
+    async def _stop():
+        from livekit.protocol.egress import StopEgressRequest
+
+        client = LiveKitAPI(
+            url=_livekit_http_url(),
+            api_key=settings.LIVEKIT_API_KEY,
+            api_secret=settings.LIVEKIT_API_SECRET,
+        )
+        try:
+            await client.egress.stop_egress(StopEgressRequest(egress_id=recording.egress_id))
+        finally:
+            await client.aclose()
+
+    try:
+        asyncio.run(_stop())
+    except Exception as exc:  # allaqachon tugagan bo'lishi mumkin
+        logging.getLogger('apps').info('egress stop: %s', exc)
+    recording.ended_at = timezone.now()
+    recording.save(update_fields=['ended_at', 'updated_at'])

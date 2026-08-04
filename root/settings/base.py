@@ -172,6 +172,12 @@ LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', 'devkey')
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', 'devsecret_change_me_32chars_min!')
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', 'ws://localhost:7880')
 
+# Dars video yozuvlari (LiveKit Egress fayllari) — auth endpoint orqali beriladi
+RECORDINGS_DIR = Path(os.getenv('RECORDINGS_DIR', BASE_DIR / 'recordings'))
+RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+# Egress konteyneri fayl yozadigan yo'l (uning FS'ida) — compose'da /out
+EGRESS_OUTPUT_PREFIX = os.getenv('EGRESS_OUTPUT_PREFIX', '/out')
+
 # Uy vazifasi AI tekshiruvi (Gemini) — apps/homework
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash')

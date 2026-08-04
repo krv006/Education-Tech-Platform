@@ -106,3 +106,48 @@ class LinkFlowTests(APITestCase):
             'username': 'child2', 'password': PASSWORD,
         })
         self.assertEqual(resp.status_code, 403)
+
+
+class LoginJournalTests(APITestCase):
+    """Login jurnali: IP/qurilma o'zgarishi bayroqlari va tarix endpointi."""
+
+    def setUp(self):
+        register(self.client, 'lj_p', 'parent')
+        self.parent_token = login(self.client, 'lj_p')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.parent_token}')
+        self.child_id = self.client.post(
+            '/api/v1/auth/children/', {'username': 'lj_s', 'password': PASSWORD},
+        ).json()['id']
+        self.client.credentials()
+
+    def _login(self, username, ua):
+        return self.client.post(
+            '/api/v1/auth/login/', {'username': username, 'password': PASSWORD},
+            HTTP_USER_AGENT=ua,
+        )
+
+    def test_new_device_flagged(self):
+        self._login('lj_s', 'Chrome/Telefon')
+        self._login('lj_s', 'Chrome/Telefon')
+        self._login('lj_s', 'Firefox/Kompyuter')  # qurilma o'zgardi
+
+        token = self._login('lj_s', 'Firefox/Kompyuter').json()['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        rows = self.client.get('/api/v1/auth/logins/').json()
+        self.assertGreaterEqual(len(rows), 4)
+        # rows[1] — Firefox'ga o'tgan login (eng oxirgisi rows[0])
+        self.assertTrue(rows[1]['new_device'])
+        self.assertFalse(rows[2]['new_device'])  # Chrome -> Chrome
+
+    def test_parent_sees_child_logins_stranger_not(self):
+        self._login('lj_s', 'Chrome/Telefon')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.parent_token}')
+        rows = self.client.get(f'/api/v1/auth/logins/?student={self.child_id}').json()
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertIn('user_agent', rows[0])
+
+        register(self.client, 'lj_p2', 'parent')
+        p2 = login(self.client, 'lj_p2')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {p2}')
+        r = self.client.get(f'/api/v1/auth/logins/?student={self.child_id}')
+        self.assertEqual(r.status_code, 403)

@@ -37,6 +37,32 @@ class RegisterView(APIView):
 class LoginView(TokenObtainPairView):
     throttle_scope = 'auth'
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        # Muvaffaqiyatli login — IP/qurilma jurnaliga yoziladi (auth.login)
+        if response.status_code == 200:
+            from .models import User
+
+            user = User.objects.filter(username=request.data.get('username', '')).first()
+            if user is not None:
+                services.record_login(user=user, request=request)
+        return response
+
+
+class LoginHistoryView(APIView):
+    """Login tarixi: o'ziniki; ota-ona `?student=<id>` bilan bolasiniki.
+
+    Har yozuvda: vaqt, IP, qurilma (User-Agent) va o'zgarish bayroqlari
+    (new_ip / new_device) — "boshqa joydan kirildi" darhol ko'rinadi.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(services.login_history(
+            viewer=request.user, student_id=request.query_params.get('student'),
+        ))
+
 
 class RefreshView(TokenRefreshView):
     throttle_scope = 'auth'

@@ -34,6 +34,30 @@ services:
       - "50000-50100:50000-50100/udp"  # WebRTC media
     volumes:
       - ./livekit.prod.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - redis
+
+  # Dars video yozuvi (EduTech.docx) — xonani MP4 ga yozadi, fayl recordings
+  # volume'iga tushadi, backend uni faqat auth stream orqali beradi
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:?}
+        api_secret: ${LIVEKIT_API_SECRET:?}
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+        logging:
+          level: info
+    volumes:
+      - recordings:/out
+    # Chrome asosidagi kompozitor uchun katta /dev/shm kerak
+    shm_size: 1gb
+    depends_on:
+      - redis
+      - livekit
 
   backend:
     build: .
@@ -43,6 +67,7 @@ services:
       DJANGO_ENV: prod
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
+      RECORDINGS_DIR: /app/recordings
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -50,6 +75,7 @@ services:
     volumes:
       - media:/app/media
       - logs:/app/logs   # log fayllar konteyner qayta yaratilsa ham saqlanadi
+      - recordings:/app/recordings   # egress yozgan videolar (faqat auth stream)
     depends_on:
       db:
         condition: service_healthy
@@ -82,6 +108,7 @@ volumes:
   pgdata:
   media:
   logs:
+  recordings:
   caddy_data:
   caddy_config:
 

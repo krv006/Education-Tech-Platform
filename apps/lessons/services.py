@@ -132,8 +132,9 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
 
 
 @transaction.atomic
-def finish_lesson(*, teacher: User, lesson: Lesson, request=None) -> Lesson:
-    """Darsni yakunlash — ochiq davomatlarga left_at bosiladi, doska PDF chatga tushadi."""
+def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', request=None) -> Lesson:
+    """Darsni yakunlash — davomatlar yopiladi, doska PDF chatga tushadi,
+    video yozuv to'xtatilib O'QITUVCHI BERGAN NOM bilan guruh chatga e'lon qilinadi."""
     if lesson.course.teacher_id != teacher.id:
         raise PermissionDenied("Faqat o'qituvchi darsni tugata oladi.")
     lesson.status = Lesson.Status.FINISHED
@@ -146,6 +147,21 @@ def finish_lesson(*, teacher: User, lesson: Lesson, request=None) -> Lesson:
     except Exception:  # noqa: BLE001 — PDF muammosi dars yakunidan muhimroq emas
         import logging
         logging.getLogger('apps').exception('board pdf publish failed')
+    # Video yozuv: to'xtatish + nom berish + guruh chatga e'lon (best-effort)
+    try:
+        from apps.live import services as live_services
+
+        from .models import LessonRecording
+        live_services.stop_recording(lesson=lesson)
+        recording = LessonRecording.objects.filter(lesson=lesson).first()
+        if recording is not None and recording.status != LessonRecording.Status.FAILED:
+            title = (recording_title or '').strip() or lesson.title
+            recording.title = title[:200]
+            recording.save(update_fields=['title', 'updated_at'])
+            publish_recording_message(lesson, recording.title)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('recording finalize failed')
     audit.record(action='lesson.finish', actor=teacher, target=lesson, request=request)
     return lesson
 
@@ -165,3 +181,126 @@ def mark_left(*, lesson_id, student: User) -> bool:
         lesson_id=lesson_id, student=student, left_at__isnull=True
     ).update(left_at=timezone.now())
     return bool(updated)
+
+
+# ── Dars video yozuvi: ko'rish/oqim/o'chirish (faqat platforma ichida) ──────
+# EduTech.docx: yozuv faqat platformada ochiladi — yuklab olib bo'lmaydi.
+# Himoya: auth bilan beriladigan MUDDATLI imzolangan stream havolasi (3 soat),
+# Content-Disposition: inline (pleer ochadi, "saqlash" taklif qilinmaydi),
+# doimiy/ochiq URL yo'q.
+
+RECORDING_STREAM_MAX_AGE = 3 * 60 * 60  # imzolangan havola muddati (sekund)
+
+
+def _can_view_lesson(user: User, lesson: Lesson) -> bool:
+    if lesson.course.teacher_id == user.id:
+        return True
+    if Enrollment.objects.filter(
+        course=lesson.course, student=user, status=Enrollment.Status.APPROVED,
+    ).exists():
+        return True
+    from apps.accounts.models import ParentChildLink
+    child_ids = ParentChildLink.objects.filter(
+        parent=user, status=ParentChildLink.Status.APPROVED,
+    ).values_list('student_id', flat=True)
+    return Enrollment.objects.filter(
+        course=lesson.course, student_id__in=child_ids,
+        status=Enrollment.Status.APPROVED,
+    ).exists()
+
+
+def _recording_path(recording):
+    from django.conf import settings
+    return settings.RECORDINGS_DIR / recording.file_name
+
+
+def recording_info(*, user: User, lesson: Lesson) -> dict:
+    """Yozuv holati + tayyor bo'lsa muddatli stream havolasi."""
+    from django.core import signing
+
+    from .models import LessonRecording
+
+    if not _can_view_lesson(user, lesson):
+        raise PermissionDenied("Bu dars yozuvini ko'rish huquqingiz yo'q.")
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None:
+        raise NotFound("Bu darsda video yozuv yo'q.")
+
+    # Fayl diskka tushgan bo'lsa — tayyor deb belgilaymiz
+    path = _recording_path(recording) if recording.file_name else None
+    file_ready = bool(path and path.exists() and path.stat().st_size > 0)
+    if file_ready and recording.status == LessonRecording.Status.RECORDING and (
+        lesson.status == Lesson.Status.FINISHED
+    ):
+        recording.status = LessonRecording.Status.COMPLETED
+        recording.save(update_fields=['status', 'updated_at'])
+
+    data = {
+        'lesson_id': str(lesson.id),
+        'title': recording.title or lesson.title,
+        'status': recording.status,
+        'ready': file_ready,
+        'created_at': recording.created_at,
+        'ended_at': recording.ended_at,
+        'error': recording.error,
+        'stream_url': None,
+    }
+    if file_ready:
+        # Imzolangan, muddatli havola — <video src> uchun (headerlarsiz),
+        # 3 soatdan keyin yaroqsiz. Foydalanuvchi tekshiruvi SHU yerda bo'ldi.
+        token = signing.TimestampSigner().sign(str(lesson.id))
+        data['stream_url'] = f'/api/v1/lessons/{lesson.id}/recording/stream/?t={token}'
+    return data
+
+
+def recording_stream_path(*, lesson: Lesson, token: str):
+    """Imzolangan tokenni tekshirib fayl yo'lini qaytaradi (stream view uchun)."""
+    from django.core import signing
+
+    from .models import LessonRecording
+
+    try:
+        value = signing.TimestampSigner().unsign(token, max_age=RECORDING_STREAM_MAX_AGE)
+    except signing.BadSignature:
+        raise PermissionDenied('Havola yaroqsiz yoki muddati tugagan.')
+    if value != str(lesson.id):
+        raise PermissionDenied('Havola boshqa darsga tegishli.')
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None or not recording.file_name:
+        raise NotFound("Yozuv topilmadi.")
+    path = _recording_path(recording)
+    if not path.exists():
+        raise NotFound("Yozuv fayli hali tayyor emas.")
+    return path
+
+
+def delete_recording(*, teacher: User, lesson: Lesson) -> None:
+    """Faqat kurs o'qituvchisi. Fayl ham, yozuv ham o'chadi."""
+    from .models import LessonRecording
+
+    if lesson.course.teacher_id != teacher.id:
+        raise PermissionDenied("Yozuvni faqat kurs o'qituvchisi o'chira oladi.")
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None:
+        raise NotFound("Yozuv yo'q.")
+    if recording.file_name:
+        path = _recording_path(recording)
+        if path.exists():
+            path.unlink()
+    recording.delete()
+
+
+def publish_recording_message(lesson: Lesson, title: str) -> None:
+    """Dars tugagach guruh chatga yozuv havolasini tashlaydi (board PDF uslubi)."""
+    from apps.chat import services as chat_services
+    from apps.chat.models import Message
+
+    room = chat_services.ensure_course_room(lesson.course)
+    Message.objects.create(
+        room=room,
+        sender=lesson.course.teacher,
+        text=(
+            f'🎥 "{title}" — dars video yozuvi tayyor!\n'
+            f"Ko'rish (faqat platformada): /recordings/{lesson.id}"
+        ),
+    )

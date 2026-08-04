@@ -90,3 +90,65 @@ def set_consent(*, parent: User, student: User, kind: str, granted: bool, reques
         meta={'kind': kind, 'granted': granted}, request=request,
     )
     return consent
+
+
+# ── Login jurnali: IP/qurilma o'zgarishini aniqlash (EduTech nazorat) ───────
+
+def record_login(*, user: User, request) -> dict:
+    """Har muvaffaqiyatli logindan keyin chaqiriladi (LoginView).
+
+    Oxirgi login bilan solishtiradi: IP yoki qurilma (User-Agent) o'zgargan
+    bo'lsa meta'da belgilanadi — ota-ona/admin "boshqa joydan kirildi"ni
+    darhol ko'radi. Yozuv AuditLog'da (action='auth.login').
+    """
+    from apps.core.models import AuditLog
+
+    user_agent = (request.META.get('HTTP_USER_AGENT') or '')[:300]
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+
+    last = (
+        AuditLog.objects
+        .filter(actor=user, action='auth.login')
+        .order_by('-created_at')
+        .first()
+    )
+    meta = {
+        'user_agent': user_agent,
+        'first_login': last is None,
+        'new_ip': bool(last and str(last.ip_address or '') != str(ip or '')),
+        'new_device': bool(last and (last.meta or {}).get('user_agent', '') != user_agent),
+    }
+    audit.record(action='auth.login', actor=user, meta=meta, request=request)
+    return meta
+
+
+def login_history(*, viewer: User, student_id=None, limit: int = 50) -> list:
+    """Login tarixi: o'zi uchun; ota-ona TASDIQLANGAN bolasi uchun ham."""
+    from apps.core.models import AuditLog
+
+    target = viewer
+    if student_id:
+        allowed = ParentChildLink.objects.filter(
+            parent=viewer, student_id=student_id,
+            status=ParentChildLink.Status.APPROVED,
+        ).exists()
+        if not allowed:
+            raise PermissionDenied("Bu foydalanuvchi login tarixini ko'rish huquqingiz yo'q.")
+        try:
+            target = User.objects.get(pk=student_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            raise NotFound('Foydalanuvchi topilmadi.')
+
+    rows = (
+        AuditLog.objects
+        .filter(actor=target, action='auth.login')
+        .order_by('-created_at')[:limit]
+    )
+    return [{
+        'at': r.created_at,
+        'ip': r.ip_address,
+        'user_agent': (r.meta or {}).get('user_agent', ''),
+        'new_ip': (r.meta or {}).get('new_ip', False),
+        'new_device': (r.meta or {}).get('new_device', False),
+    } for r in rows]

@@ -288,3 +288,6 @@ cython_debug/
 
 # server log fayllari
 logs/
+
+# dars video yozuvlari (lokal)
+recordings/

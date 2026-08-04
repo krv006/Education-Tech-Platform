@@ -1,8 +1,10 @@
 """Lessons views — yupqa qatlam: HTTP <-> service/selector."""
 from django.db.models import Q
+from django.http import FileResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import NotFound
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts.models import User
@@ -141,6 +143,10 @@ class LessonViewSet(viewsets.ModelViewSet):
             return [RequirePerm('lesson.edit')()]
         if self.action == 'finish':
             return [RequirePerm('lesson.finish')()]
+        if self.action == 'recording_stream':
+            # Video oqimi imzolangan muddatli token bilan himoyalangan —
+            # <video src> Authorization header yubora olmaydi
+            return [AllowAny()]
         return [IsAuthenticated()]
 
     def get_queryset(self):
@@ -155,9 +161,88 @@ class LessonViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def finish(self, request, pk=None):
+        """Darsni yakunlash. `recording_title` — video yozuvga o'qituvchi
+        beradigan nom (bo'sh bo'lsa dars nomi olinadi); yozuv guruh chatga tushadi."""
         lesson = self.get_object()
-        lesson = services.finish_lesson(teacher=request.user, lesson=lesson, request=request)
+        lesson = services.finish_lesson(
+            teacher=request.user, lesson=lesson,
+            recording_title=request.data.get('recording_title') or '',
+            request=request,
+        )
         return Response(LessonSerializer(lesson).data)
+
+    @action(detail=True, methods=['get', 'delete'], url_path='recording')
+    def recording(self, request, pk=None):
+        """GET — yozuv holati + muddatli stream havolasi; DELETE — o'qituvchi o'chiradi."""
+        lesson = self.get_object()
+        if request.method == 'DELETE':
+            services.delete_recording(teacher=request.user, lesson=lesson)
+            return Response(status=204)
+        return Response(services.recording_info(user=request.user, lesson=lesson))
+
+    @action(
+        detail=True, methods=['get'], url_path='recording/stream',
+        permission_classes=[AllowAny], authentication_classes=[],
+    )
+    def recording_stream(self, request, pk=None):
+        """Video oqimi — faqat imzolangan MUDDATLI token bilan (recording_info
+        beradi). Auth header kerak emas (<video src> uchun); doimiy URL yo'q,
+        Content-Disposition: inline — brauzer pleerda ochadi."""
+        from .models import Lesson as LessonModel
+
+        try:
+            lesson = LessonModel.objects.get(pk=pk)
+        except (LessonModel.DoesNotExist, ValueError, TypeError):
+            raise NotFound('Dars topilmadi.')
+        path = services.recording_stream_path(
+            lesson=lesson, token=request.query_params.get('t') or '',
+        )
+        return _ranged_video_response(request, path)
+
+
+class _FileSlice:
+    """Range so'rov uchun chegaralangan fayl oqimi (xotiraga yuklamasdan)."""
+
+    def __init__(self, fileobj, length):
+        self._f = fileobj
+        self._remaining = length
+
+    def read(self, size=8192):
+        if self._remaining <= 0:
+            return b''
+        chunk = self._f.read(min(size, self._remaining))
+        self._remaining -= len(chunk)
+        return chunk
+
+    def close(self):
+        self._f.close()
+
+
+def _ranged_video_response(request, path):
+    """MP4 ni HTTP Range bilan beradi — pleer o'tkazib ko'ra oladi (seek).
+    inline: brauzer "saqlash" emas, pleerda ochadi."""
+    import re
+
+    size = path.stat().st_size
+    range_header = request.META.get('HTTP_RANGE', '')
+    match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+    if match:
+        start = int(match.group(1))
+        end = min(int(match.group(2)) if match.group(2) else size - 1, size - 1)
+        start = min(start, size - 1)
+        length = end - start + 1
+        f = open(path, 'rb')
+        f.seek(start)
+        response = FileResponse(_FileSlice(f, length), status=206, content_type='video/mp4')
+        response['Content-Range'] = f'bytes {start}-{end}/{size}'
+        response['Content-Length'] = str(length)
+    else:
+        response = FileResponse(open(path, 'rb'), content_type='video/mp4')
+        response['Content-Length'] = str(size)
+    response['Accept-Ranges'] = 'bytes'
+    response['Content-Disposition'] = 'inline'
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):

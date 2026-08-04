@@ -148,11 +148,20 @@ davomat/auth oqimlari. AI chaqiruvi testlarda mock — kalit kerak emas.
 - ⚠️ Skrinshot/screenrecord taqiqlash — brauzerda IMKONSIZ; yechim: desktop app
   (Electron `setContentProtection`) yoki mobil ilova (`FLAG_SECURE`) — reja
 - ⚠️ Qo'shimcha ekran taqiqlash — brauzerda imkonsiz; desktop app'da amaliy hal bo'ladi
-- ⏳ Dars video yozuvi avtomatik saqlash — LiveKit Egress bilan qilinadi (reja)
+- ✅ Dars video yozuvi (LiveKit Egress): dars LIVE bo'lganda AVTOMATIK boshlanadi;
+  tugatishda o'qituvchi nom beradi (`finish` -> `recording_title`) va yozuv guruh
+  chatga e'lon qilinadi (`/recordings/<lesson_id>`); fayl FAQAT platformada
+  ochiladi — muddatli imzolangan stream (3 soat), inline pleer, doimiy/ochiq URL
+  yo'q, yuklab olish taklif qilinmaydi. Endpointlar:
+  `GET /lessons/<id>/recording/` (holat+stream_url), `.../recording/stream/?t=`,
+  `DELETE /lessons/<id>/recording/` (o'qituvchi)
+- ✅ Login jurnali: har login IP + qurilma (User-Agent) bilan yoziladi,
+  o'zgarish bayroqlari (`new_ip`, `new_device`); tarix: `GET /auth/logins/`
+  (o'ziniki), ota-ona `?student=<id>` bilan bolasiniki
 
 ## 11. Keyingi qadamlar
 
-1. LiveKit Egress — dars yozuvini avtomatik saqlash (guruh o'chirilguncha)
-2. Desktop app (Electron qobiq): skrinshot-himoya + ikkinchi ekran nazorati + kiosk
-3. Video ustiga o'quvchi ismli watermark
-4. Mobil ilova (WebView + FLAG_SECURE)
+1. Desktop app (Electron qobiq): skrinshot-himoya + ikkinchi ekran nazorati + kiosk
+2. Video ustiga o'quvchi ismli watermark
+3. Mobil ilova (WebView + FLAG_SECURE)
+4. Bitta sessiya cheklovi (yangi login eski tokenni bekor qiladi)
