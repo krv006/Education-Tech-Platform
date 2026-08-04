@@ -47,7 +47,7 @@ Kod qatlamlari (ARCHITECTURE.md qoidasi): `views.py` yupqa → biznes-logika
 | `apps/lessons` | Kurs, dars jadvali, yozilish (enroll), davomat hisoboti | `/api/v1/courses/`, `/api/v1/lessons/`, `/api/v1/attendance/` |
 | `apps/live` | LiveKit token, avtomatik davomat (kirdi/chiqdi), "Siz shu yerdamisiz?" diqqat tekshiruvi (random, 15s), fokus jurnali (oynadan chiqib-kirish) | `/api/v1/live/*` |
 | `apps/chat` | Telegram uslubi: har kurs = guruh chat; direct faqat o'qituvchi↔o'quvchi (1 martalik so'rov → qabul/block); real-time WebSocket | `/api/v1/chat/*`, `ws /ws/chat/<room_id>/` |
-| `apps/board` | Jonli dars doskasi: chizish, matn/formula bloklari, bir nechta sheet, o'chirish SABABI majburiy (jurnal), dars tugagach PDF → kurs chatiga | `/api/v1/board/<lesson_id>/*` |
+| `apps/board` | Jonli dars doskasi: chizish, matn bloklari, bir nechta sheet, o'chirish SABABI majburiy (jurnal), dars tugagach PDF → kurs chatiga. **Matematik rejim FAQAT matematika kurslarida** (`math_enabled` bayrog'i): MathLive LaTeX formula bloklari (`type:'math'`, PDF'da render bo'ladi) va SymPy yechuvchi | `/api/v1/board/<lesson_id>/*` |
 | `apps/homework` | AI uy vazifasi: o'qituvchi vazifani rich-matn (sanitized HTML) yoki fayl (Word/PDF/rasm) bilan beradi, muddat qo'yadi; o'quvchi PDF/rasm/DOCX (Speaking'da audio) topshiradi; Gemini savolma-savol O'ZBEKCHA baholaydi; statistika, kech topshirish belgisi | `/api/v1/homework/*` |
 | `apps/core` | UUID+timestamp baza modellari, soft-delete, RBAC, audit log, yagona xato formati | — |
 

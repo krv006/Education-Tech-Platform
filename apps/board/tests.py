@@ -25,7 +25,9 @@ class BoardTests(TestCase):
     def setUp(self):
         self.teacher = make('t1', User.Role.TEACHER)
         self.student = make('s1', User.Role.STUDENT)
-        self.course = Course.objects.create(teacher=self.teacher, title='Algebra')
+        self.course = Course.objects.create(
+            teacher=self.teacher, title='Algebra', subject='Matematika',
+        )
         chat_services.ensure_course_room(self.course)
         Enrollment.objects.create(
             course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
@@ -104,3 +106,72 @@ class BoardTests(TestCase):
         self.api(self.teacher).post(self.url('stroke/'), {'sheet': 0, 'stroke': STROKE}, format='json')
         r = self.api(self.teacher).post(self.url('sheet/'))
         self.assertEqual(r.data['index'], 1)
+
+
+class MathBoardTests(TestCase):
+    """MathLive kontrakti: formula bloklari va SymPy yechuvchi FAQAT
+    matematika kurslarida; PDF LaTeX'ni render qiladi."""
+
+    MATH_STROKE = {
+        'type': 'math', 'latex': r'\frac{x^2-9}{x-3}', 'x': 80, 'y': 90, 'size': 24,
+    }
+
+    def setUp(self):
+        self.teacher = make('mb_t', User.Role.TEACHER)
+        self.math_course = Course.objects.create(
+            teacher=self.teacher, title='Algebra 7', subject='Matematika',
+        )
+        self.eng_course = Course.objects.create(
+            teacher=self.teacher, title='English', subject='Ingliz tili',
+        )
+        chat_services.ensure_course_room(self.math_course)
+        chat_services.ensure_course_room(self.eng_course)
+        self.math_lesson = Lesson.objects.create(
+            course=self.math_course, title='M', starts_at=timezone.now(), duration_min=45,
+        )
+        self.eng_lesson = Lesson.objects.create(
+            course=self.eng_course, title='E', starts_at=timezone.now(), duration_min=45,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.teacher)
+
+    def test_math_enabled_flag_math_only(self):
+        r = self.client.get(f'/api/v1/board/{self.math_lesson.id}/')
+        self.assertTrue(r.data['math_enabled'])
+        r = self.client.get(f'/api/v1/board/{self.eng_lesson.id}/')
+        self.assertFalse(r.data['math_enabled'])
+
+    def test_math_stroke_only_on_math_course(self):
+        r = self.client.post(
+            f'/api/v1/board/{self.math_lesson.id}/stroke/',
+            {'sheet': 0, 'stroke': self.MATH_STROKE}, format='json',
+        )
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['type'], 'math')
+        self.assertEqual(r.data['latex'], r'\frac{x^2-9}{x-3}')
+
+        r = self.client.post(
+            f'/api/v1/board/{self.eng_lesson.id}/stroke/',
+            {'sheet': 0, 'stroke': self.MATH_STROKE}, format='json',
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_solver_only_on_math_course(self):
+        r = self.client.post(
+            f'/api/v1/board/{self.math_lesson.id}/solve/', {'expr': 'x^2 - 9 = 0'}, format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post(
+            f'/api/v1/board/{self.eng_lesson.id}/solve/', {'expr': 'x^2 - 9 = 0'}, format='json',
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_pdf_renders_math_stroke(self):
+        self.client.post(
+            f'/api/v1/board/{self.math_lesson.id}/stroke/',
+            {'sheet': 0, 'stroke': self.MATH_STROKE}, format='json',
+        )
+        path = services.generate_pdf(self.math_lesson)
+        self.assertIsNotNone(path)
+        self.assertGreater(path.stat().st_size, 1000)
+        path.unlink()

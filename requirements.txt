@@ -12,6 +12,7 @@ whitenoise>=6.8
 redis>=5.0
 reportlab>=4.2
 sympy>=1.13
+matplotlib>=3.8
 google-generativeai>=0.8
 python-docx>=1.1
 nh3>=0.2

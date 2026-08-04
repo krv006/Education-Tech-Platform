@@ -1,4 +1,5 @@
 """Doska service layer — chizish, o'chirish (sabab bilan), ruxsat, PDF -> chat."""
+import re
 import uuid
 
 from django.conf import settings
@@ -40,6 +41,15 @@ def can_draw(user: User, lesson: Lesson) -> bool:
     return BoardGrant.objects.filter(lesson=lesson, student=user).exists()
 
 
+# Matematik vosita (MathLive formulalar, SymPy yechuvchi) FAQAT matematika
+# oilasidagi kurslarda — ingliz tili va boshqa fanlarda chiqmaydi (EduTech).
+_MATH_SUBJECT_RE = re.compile(r'matem|algebra|geometr', re.IGNORECASE)
+
+
+def is_math_lesson(lesson: Lesson) -> bool:
+    return bool(_MATH_SUBJECT_RE.search(lesson.course.subject or ''))
+
+
 def get_board(*, user: User, lesson_id) -> dict:
     lesson = _get_lesson(lesson_id)
     if not can_view(user, lesson):
@@ -52,12 +62,37 @@ def get_board(*, user: User, lesson_id) -> dict:
         'can_draw': can_draw(user, lesson),
         'is_teacher': _is_teacher(user, lesson),
         'size': [SHEET_W, SHEET_H],
-        # fanga mos doska vositalari uchun (masalan matematikada ƒ Formula)
         'subject': lesson.course.subject,
+        # Frontend uchun YAGONA manba: matematik vosita (MathLive math-field,
+        # formula bloklari) faqat shu true bo'lganda ko'rsatiladi — fan
+        # regex'ini frontendda takrorlash SHART EMAS
+        'math_enabled': is_math_lesson(lesson),
     }
 
 
-def _validate_stroke(stroke: dict) -> dict:
+def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
+    # MathLive formula bloki (LaTeX) — FAQAT matematika kurslarida
+    if stroke.get('type') == 'math':
+        if not allow_math:
+            raise ValidationError({'stroke': (
+                'Matematik formula bloki faqat matematika kurslari doskasida ishlaydi.'
+            )})
+        latex = str(stroke.get('latex') or '').strip()
+        if not latex:
+            raise ValidationError({'stroke': "Formula bo'sh."})
+        try:
+            x = float(stroke.get('x', 60))
+            y = float(stroke.get('y', 60))
+        except (TypeError, ValueError):
+            raise ValidationError({'stroke': "Koordinata noto'g'ri."})
+        return {
+            'type': 'math',
+            'latex': latex[:2000],
+            'x': round(max(0, min(SHEET_W - 40, x)), 1),
+            'y': round(max(0, min(SHEET_H - 20, y)), 1),
+            'size': max(12, min(48, int(stroke.get('size', 24)))),
+            'color': str(stroke.get('color', '#1c1e3a'))[:9],
+        }
     # Matn elementi (formula bloklari) — chiziq emas
     if stroke.get('type') == 'text':
         text = str(stroke.get('text') or '').strip()
@@ -103,7 +138,7 @@ def add_stroke(*, user: User, lesson_id, sheet_index: int, stroke: dict) -> dict
     )
     if len(sheet.strokes) >= MAX_STROKES_PER_SHEET:
         raise ValidationError("Bu sheet to'ldi — yangisini oching.")
-    clean = _validate_stroke(stroke)
+    clean = _validate_stroke(stroke, allow_math=is_math_lesson(lesson))
     clean['id'] = uuid.uuid4().hex[:12]
     clean['by'] = user.first_name or user.username
     sheet.strokes = [*sheet.strokes, clean]
@@ -174,6 +209,19 @@ def _pdf_path(lesson: Lesson):
     return base / f'{lesson.id}.pdf'
 
 
+def _math_png(latex: str, color: str):
+    """LaTeX -> PNG (matplotlib mathtext — TeX o'rnatilishi shart emas).
+    MathLive'dan kelgan formulalarning mutlaq ko'pchiligini qamraydi."""
+    import io
+
+    from matplotlib import mathtext
+
+    buf = io.BytesIO()
+    mathtext.math_to_image(f'${latex}$', buf, dpi=200, format='png', color=color)
+    buf.seek(0)
+    return buf
+
+
 def generate_pdf(lesson: Lesson):
     """Sheet'larni PDF sahifalarga chizadi (reportlab). Bo'sh doska -> None."""
     sheets = [s for s in lesson.board_sheets.all() if s.strokes]
@@ -190,6 +238,30 @@ def generate_pdf(lesson: Lesson):
         c.setFillColorRGB(1, 1, 1)
         c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
         for s in sheet.strokes:
+            if s.get('type') == 'math':
+                # MathLive LaTeX bloki — rasmga aylantirib joylaymiz;
+                # render bo'lmasa (murakkab LaTeX) — matn fallback
+                size = max(6, s.get('size', 24) * scale)
+                x_pt = s.get('x', 60) * scale
+                y_pt = page_h - s.get('y', 60) * scale
+                try:
+                    from reportlab.lib.utils import ImageReader
+
+                    img = ImageReader(_math_png(
+                        s.get('latex', ''), s.get('color', '#1c1e3a'),
+                    ))
+                    iw, ih = img.getSize()
+                    target_h = size * 1.6
+                    target_w = iw * (target_h / ih)
+                    c.drawImage(
+                        img, x_pt, y_pt - target_h,
+                        width=target_w, height=target_h, mask='auto',
+                    )
+                except Exception:  # noqa: BLE001 — PDF hech qachon yiqilmasin
+                    c.setFont('Courier', size)
+                    safe = str(s.get('latex', '')).encode('latin-1', 'replace').decode('latin-1')
+                    c.drawString(x_pt, y_pt - size, safe)
+                continue
             if s.get('type') == 'text':
                 try:
                     c.setFillColor(HexColor(s.get('color', '#1c1e3a')))
@@ -248,10 +320,17 @@ def publish_board_pdf(lesson: Lesson):
 
 
 def solve_formula(*, user: User, lesson_id, expr: str) -> dict:
-    """Photomath uslubi: formulani avtomatik yechish/soddalashtirish (SymPy)."""
+    """Photomath uslubi: formulani avtomatik yechish/soddalashtirish (SymPy).
+
+    FAQAT matematika kurslarida — boshqa fanlarda bu vosita mavjud emas.
+    """
     lesson = _get_lesson(lesson_id)
     if not can_view(user, lesson):
         raise PermissionDenied("Ruxsat yo'q.")
+    if not is_math_lesson(lesson):
+        raise ValidationError({'expr': (
+            'Formula yechuvchi faqat matematika kurslarida ishlaydi.'
+        )})
     from .math_solver import MathError, solve_math
     try:
         return solve_math(expr)
