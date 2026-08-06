@@ -25,6 +25,29 @@ services:
       - "50000-50100:50000-50100/udp"  # WebRTC media
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml
+    depends_on:
+      - redis
+
+  # Dars video yozuvi (dev) — prod bilan bir xil, faqat named volume o'rniga
+  # ./recordings ga bog'langan: backend Docker'siz (runserver) ishlagani uchun
+  # RECORDINGS_DIR (default BASE_DIR/recordings) shu papkani bevosita o'qiydi.
+  egress:
+    image: livekit/egress:latest
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: devkey
+        api_secret: devsecret_change_me_32chars_min!
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+        logging:
+          level: info
+    volumes:
+      - ./recordings:/out
+    shm_size: 1gb  # Chrome asosidagi kompozitor uchun
+    depends_on:
+      - redis
+      - livekit
 
 volumes:
   pgdata:

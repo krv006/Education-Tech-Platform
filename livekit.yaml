@@ -9,5 +9,9 @@ rtc:
   use_external_ip: false
 keys:
   devkey: devsecret_change_me_32chars_min!
+# Egress (dars video yozuvi) server bilan shu orqali gaplashadi — bo'lmasa
+# yozuvni boshlash buyrug'i hech qanday worker'ga yetib bormaydi
+redis:
+  address: redis:6379
 logging:
   level: info
