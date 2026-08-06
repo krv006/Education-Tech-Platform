@@ -50,12 +50,12 @@ class FocusEventView(APIView):
     permission_classes = [RequirePerm('room.token')]
 
     def post(self, request):
-        services.record_focus(
+        result = services.record_focus(
             user=request.user,
             lesson_id=request.data.get('lesson_id'),
             kind=request.data.get('kind'),
         )
-        return Response({'ok': True})
+        return Response({'ok': True, **result})
 
 
 class AllowShareView(APIView):

@@ -8,6 +8,7 @@ urlpatterns = [
     path('logins/', views.LoginHistoryView.as_view(), name='login-history'),
     path('token/refresh/', views.RefreshView.as_view(), name='token-refresh'),
     path('me/', views.MeView.as_view(), name='me'),
+    path('users/search/', views.UserSearchView.as_view(), name='user-search'),
     path('children/', views.ChildCreateView.as_view(), name='child-create'),
     path('links/', views.LinkListView.as_view(), name='link-list'),
     path('links/request/', views.LinkRequestView.as_view(), name='link-request'),

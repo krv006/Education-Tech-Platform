@@ -369,3 +369,94 @@ class RecordingTests(APITestCase):
         from pathlib import Path
 
         self.assertFalse((Path(self.tmp) / f'{self.lesson.room_name}.mp4').exists())
+
+
+class FocusEscalationTests(APITestCase):
+    """EPAM imtihon uslubi: 1-2 marta oynadan chiqish — o'ziga ogohlantirish,
+    3-chisida (FOCUS_PARENT_ALERT_THRESHOLD) — ota-onaga FocusAlert signali."""
+
+    def setUp(self):
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('fe_t', User.Role.TEACHER)
+        self.student = mk('fe_s', User.Role.STUDENT)
+        course = Course.objects.create(teacher=self.teacher, title='FE')
+        Enrollment.objects.create(course=course, student=self.student, status=Enrollment.Status.APPROVED)
+        self.lesson = Lesson.objects.create(
+            course=course, title='L', starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def _exit(self):
+        return self.api(self.student).post('/api/v1/live/focus/', {
+            'lesson_id': str(self.lesson.id), 'kind': 'exit',
+        })
+
+    def test_first_two_exits_only_warn_student(self):
+        for expected_count in (1, 2):
+            resp = self._exit()
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body['exit_count'], expected_count)
+            self.assertEqual(body['threshold'], 3)
+            self.assertFalse(body['parent_notified'])
+        from .models import FocusAlert
+        self.assertFalse(FocusAlert.objects.filter(lesson=self.lesson, student=self.student).exists())
+
+    def test_third_exit_notifies_parent_and_creates_alert(self):
+        from .models import FocusAlert
+
+        self._exit()
+        self._exit()
+        resp = self._exit()
+        body = resp.json()
+        self.assertEqual(body['exit_count'], 3)
+        self.assertTrue(body['parent_notified'])
+        alert = FocusAlert.objects.get(lesson=self.lesson, student=self.student)
+        self.assertEqual(alert.exit_count, 3)
+
+    def test_alert_created_only_once_despite_further_exits(self):
+        from .models import FocusAlert
+
+        for _ in range(5):
+            self._exit()
+        self.assertEqual(
+            FocusAlert.objects.filter(lesson=self.lesson, student=self.student).count(), 1,
+        )
+
+    def test_attendance_serializer_exposes_focus_alert(self):
+        from django.utils import timezone
+
+        from .models import Attendance
+
+        Attendance.objects.create(lesson=self.lesson, student=self.student, joined_at=timezone.now())
+        for _ in range(3):
+            self._exit()
+        rows = self.api(self.teacher).get('/api/v1/attendance/').json()['results']
+        row = next(r for r in rows if r['student']['username'] == 'fe_s')
+        self.assertTrue(row['focus_alert'])
+
+    def test_return_event_does_not_affect_counter(self):
+        r = self.api(self.student).post('/api/v1/live/focus/', {
+            'lesson_id': str(self.lesson.id), 'kind': 'return',
+        })
+        body = r.json()
+        self.assertIsNone(body['exit_count'])
+        self.assertFalse(body['parent_notified'])

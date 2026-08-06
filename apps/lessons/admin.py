@@ -5,6 +5,7 @@ from .models import (
     AttentionCheck,
     Course,
     Enrollment,
+    FocusAlert,
     FocusEvent,
     Lesson,
     LessonRecording,
@@ -70,3 +71,12 @@ class FocusEventAdmin(admin.ModelAdmin):
     list_filter = ['kind']
     search_fields = ['student__username', 'lesson__title']
     date_hierarchy = 'created_at'
+
+
+@admin.register(FocusAlert)
+class FocusAlertAdmin(admin.ModelAdmin):
+    """Ota-onaga ko'rinadigan signal — o'quvchi chegaradan ko'p chiqqan darslar."""
+
+    list_display = ['student', 'lesson', 'exit_count', 'created_at']
+    list_filter = ['created_at']
+    search_fields = ['student__username', 'lesson__title']

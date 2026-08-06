@@ -17,8 +17,9 @@ from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from apps.board.routing import websocket_urlpatterns as board_ws  # noqa: E402
 from apps.chat.routing import websocket_urlpatterns as chat_ws  # noqa: E402
 from apps.chat.ws_auth import JWTAuthMiddleware  # noqa: E402
+from apps.notifications.routing import websocket_urlpatterns as notifications_ws  # noqa: E402
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
-    'websocket': JWTAuthMiddleware(URLRouter([*chat_ws, *board_ws])),
+    'websocket': JWTAuthMiddleware(URLRouter([*chat_ws, *board_ws, *notifications_ws])),
 })

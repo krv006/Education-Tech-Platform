@@ -26,6 +26,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'attendance.view',
         'audit.view',
         'user.manage',
+        'notification.send',
     },
     TEACHER: {
         'course.create', 'course.edit', 'course.view', 'course.enroll',

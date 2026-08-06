@@ -122,6 +122,26 @@ class FocusEvent(TimeStampedUUIDModel):
         return f'{self.student.username} · {self.kind} · {self.created_at:%H:%M:%S}'
 
 
+class FocusAlert(TimeStampedUUIDModel):
+    """O'quvchi darsdan FOCUS_PARENT_ALERT_THRESHOLD martadan ko'p chiqqanda bir
+    marta yaratiladi — ota-ona paneliga ko'rinadigan signal (EPAM imtihon uslubi:
+    1-2 marta ogohlantirish, uchinchisida ota-onaga xabar boradi).
+    """
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='focus_alerts')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='focus_alerts')
+    exit_count = PositiveIntegerField()
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_focus_alert'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} · {self.exit_count} marta chiqdi'
+
+
 class LessonRecording(TimeStampedUUIDModel):
     """Dars video yozuvi (EduTech.docx: "video zapis avtomatik saqlansin").
 

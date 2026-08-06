@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'apps.chat',
     'apps.board',
     'apps.homework',
+    'apps.notifications',
 ]
 
 MIDDLEWARE = [
@@ -145,6 +146,7 @@ JAZZMIN_SETTINGS = {
         'lessons.Attendance': 'fas fa-clipboard-check',
         'lessons.AttentionCheck': 'fas fa-eye',
         'lessons.FocusEvent': 'fas fa-door-open',
+        'lessons.FocusAlert': 'fas fa-bell',
         'lessons.LessonRecording': 'fas fa-video',
         'chat.ChatRoom': 'fas fa-comments',
         'chat.Message': 'fas fa-comment',
@@ -154,9 +156,13 @@ JAZZMIN_SETTINGS = {
         'board.BoardErase': 'fas fa-eraser',
         'homework.Assignment': 'fas fa-tasks',
         'homework.Submission': 'fas fa-file-upload',
+        'notifications.Notification': 'fas fa-bullhorn',
+        'notifications.NotificationRecipient': 'fas fa-envelope-open-text',
         'core.AuditLog': 'fas fa-shield-alt',
     },
-    'order_with_respect_to': ['accounts', 'lessons', 'homework', 'chat', 'board', 'core'],
+    'order_with_respect_to': [
+        'accounts', 'lessons', 'homework', 'chat', 'board', 'notifications', 'core',
+    ],
     'related_modal_active': True,
 }
 JAZZMIN_UI_TWEAKS = {
@@ -221,6 +227,10 @@ RECORDINGS_DIR = Path(os.getenv('RECORDINGS_DIR', BASE_DIR / 'recordings'))
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 # Egress konteyneri fayl yozadigan yo'l (uning FS'ida) — compose'da /out
 EGRESS_OUTPUT_PREFIX = os.getenv('EGRESS_OUTPUT_PREFIX', '/out')
+
+# Fokus nazorati: 1- va 2-marta oynadan chiqishda o'quvchining o'ziga ogohlantirish,
+# shu chegaradan keyin ota-onaga signal (EPAM imtihon nazorati uslubi — EduTech.docx)
+FOCUS_PARENT_ALERT_THRESHOLD = int(os.getenv('FOCUS_PARENT_ALERT_THRESHOLD', '3'))
 
 # Uy vazifasi AI tekshiruvi (Gemini) — apps/homework
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')

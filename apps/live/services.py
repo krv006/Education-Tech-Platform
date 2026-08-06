@@ -12,7 +12,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from apps.accounts.models import User
 from apps.core import audit
 from apps.lessons import services as lesson_services
-from apps.lessons.models import AttentionCheck, Enrollment, FocusEvent, Lesson
+from apps.lessons.models import AttentionCheck, Enrollment, FocusAlert, FocusEvent, Lesson
 
 ATTENTION_WINDOW_SEC = 15  # popup ekranda turadigan vaqt (EduTech.docx)
 ATTENTION_GRACE_SEC = 8    # tarmoq kechikishi uchun qo'shimcha imkon
@@ -132,14 +132,36 @@ def answer_attention(*, user: User, check_id) -> AttentionCheck:
 
 # ── Anti-cheat: fokus jurnali ──────────────────────────────────────────────
 
-def record_focus(*, user: User, lesson_id, kind: str) -> FocusEvent:
+def record_focus(*, user: User, lesson_id, kind: str) -> dict:
+    """Chiqib-kirishni yozadi. 'exit' bo'lsa shu darsdagi jami chiqishlar soni va
+    ogohlantirish darajasini qaytaradi: threshold'gacha — o'quvchining o'ziga
+    ogohlantirish, threshold'da (bir marta) — ota-onaga FocusAlert yaratiladi.
+    """
     if kind not in FocusEvent.Kind.values:
         raise ValidationError({'kind': 'exit yoki return.'})
     try:
         lesson = Lesson.objects.get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
         raise NotFound('Dars topilmadi.')
-    return FocusEvent.objects.create(lesson=lesson, student=user, kind=kind)
+    event = FocusEvent.objects.create(lesson=lesson, student=user, kind=kind)
+
+    if kind != FocusEvent.Kind.EXIT:
+        return {'kind': kind, 'exit_count': None, 'threshold': None, 'parent_notified': False}
+
+    exit_count = FocusEvent.objects.filter(
+        lesson=lesson, student=user, kind=FocusEvent.Kind.EXIT,
+    ).count()
+    threshold = settings.FOCUS_PARENT_ALERT_THRESHOLD
+    parent_notified = exit_count >= threshold
+    if parent_notified:
+        # Faqat birinchi chegaradan oshgan safar yaratiladi — spam bo'lmasin
+        FocusAlert.objects.get_or_create(
+            lesson=lesson, student=user, defaults={'exit_count': exit_count},
+        )
+    return {
+        'kind': event.kind, 'exit_count': exit_count,
+        'threshold': threshold, 'parent_notified': parent_notified,
+    }
 
 
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────

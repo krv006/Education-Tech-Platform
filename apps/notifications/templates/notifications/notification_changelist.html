@@ -1,0 +1,10 @@
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+  <li>
+    <a href="{% url 'admin:notifications_notification_send' %}" class="addlink">
+      Yangi xabar yuborish
+    </a>
+  </li>
+  {{ block.super }}
+{% endblock %}

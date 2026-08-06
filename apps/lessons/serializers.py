@@ -60,12 +60,13 @@ class AttendanceSerializer(serializers.ModelSerializer):
     attention_answered = serializers.SerializerMethodField()
     focus_exits = serializers.SerializerMethodField()
     focus = serializers.SerializerMethodField()
+    focus_alert = serializers.SerializerMethodField()
 
     class Meta:
         model = Attendance
         fields = [
             'id', 'lesson', 'lesson_title', 'student', 'joined_at', 'left_at', 'minutes',
-            'attention_total', 'attention_answered', 'focus_exits', 'focus',
+            'attention_total', 'attention_answered', 'focus_exits', 'focus', 'focus_alert',
         ]
 
     def get_attention_total(self, obj) -> int:
@@ -84,3 +85,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         """Chiqish-qaytish tahlili: jami/eng uzun yo'qlik + taymlayn
         (qachon chiqdi, qachon qaytdi, necha sekund turdi)."""
         return selectors.focus_summary(obj.lesson, obj.student)
+
+    def get_focus_alert(self, obj) -> bool:
+        """Chegaradan oshib, ota-onaga signal yaratilganmi (FOCUS_PARENT_ALERT_THRESHOLD)."""
+        return obj.lesson.focus_alerts.filter(student=obj.student).exists()
