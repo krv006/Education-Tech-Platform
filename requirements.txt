@@ -1,4 +1,6 @@
-Django>=6.0,<7.0
+# 6.1'da django.utils.cache.cc_delim_re olib tashlangan — DRF hali mos emas,
+# shuning uchun 6.0.x ga qotirilgan (keshsiz build'da sinov o'tmagan versiya tushmasin)
+Django>=6.0,<6.1
 djangorestframework>=3.17
 djangorestframework-simplejwt>=5.5
 django-cors-headers>=4.9
