@@ -37,3 +37,10 @@
 test-admin-api.navigocrm.com {
 	reverse_proxy nginx:80
 }
+
+# --- Eslat bot adminkasi (eslat.thesofmebel.uz) ---
+# Shu serverdagi yana bir loyiha (eslat_bot_default tarmog'i) — compose'dagi
+# `eslatbot` external network orqali avtomatik ulanadi.
+eslat.thesofmebel.uz {
+	reverse_proxy eslatbot_adminka:8000
+}

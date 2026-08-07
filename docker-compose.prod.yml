@@ -106,6 +106,7 @@ services:
     networks:
       - default
       - navigo   # Navigo CRM nginx'iga proxy uchun (Caddyfile'dagi navigocrm bloki)
+      - eslatbot # Eslat bot adminkasiga proxy uchun (Caddyfile'dagi eslat bloki)
     depends_on:
       - backend
       - livekit
@@ -119,8 +120,11 @@ volumes:
   caddy_config:
 
 networks:
-  # Navigo CRM loyihasining tarmog'i — shu serverda allaqachon mavjud.
-  # Yangi serverda bo'lmasa: `docker network create navigo` yoki shu bo'lim +
-  # caddy'dagi `networks:` ni olib tashlang.
+  # Boshqa loyihalarning tarmoqlari — shu serverda allaqachon mavjud.
+  # Yangi serverda bo'lmasa: `docker network create <nom>` yoki shu bo'limlar +
+  # caddy'dagi `networks:` yozuvlarini olib tashlang.
   navigo:
+    external: true
+  eslatbot:
+    name: eslat_bot_default
     external: true
