@@ -245,18 +245,31 @@ def start_recording(*, lesson: Lesson) -> None:
     file_name = f'{lesson.room_name}.mp4'
 
     def _target():
+        import time as _time
+
         from django.db import close_old_connections
 
+        # Token berilgan payt o'qituvchi brauzeri hali xonaga ULANMAGAN bo'ladi —
+        # LiveKit xonani birinchi ishtirokchi kirganda yaratadi. Shuning uchun
+        # "room does not exist" xatosida 2 daqiqagacha kutib qayta urinamiz.
+        last_error = None
         try:
-            egress_id = asyncio.run(_egress_start(lesson.room_name, file_name))
+            for _attempt in range(24):
+                try:
+                    egress_id = asyncio.run(_egress_start(lesson.room_name, file_name))
+                    LessonRecording.objects.filter(pk=recording.pk).update(
+                        egress_id=egress_id, file_name=file_name,
+                        status=LessonRecording.Status.RECORDING, error='',
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if 'does not exist' not in str(exc):
+                        break  # boshqa xato — kutish foyda bermaydi
+                    _time.sleep(5)
+            logging.getLogger('apps').warning('egress start failed: %s', last_error)
             LessonRecording.objects.filter(pk=recording.pk).update(
-                egress_id=egress_id, file_name=file_name,
-                status=LessonRecording.Status.RECORDING, error='',
-            )
-        except Exception as exc:  # egress yo'q/ulanmadi — jurnalga yozamiz
-            logging.getLogger('apps').warning('egress start failed: %s', exc)
-            LessonRecording.objects.filter(pk=recording.pk).update(
-                status=LessonRecording.Status.FAILED, error=str(exc)[:500],
+                status=LessonRecording.Status.FAILED, error=str(last_error)[:500],
             )
         finally:
             close_old_connections()
