@@ -58,8 +58,9 @@ services:
     # Chrome asosidagi kompozitor uchun katta /dev/shm kerak
     shm_size: 1gb
     # Egress eng "och" konteyner — chegara qo'yamiz, API/darslarga
-    # CPU yetmay qolmasin (yozuv sekinlashsa ham dars sekinlashmaydi)
-    cpus: 2
+    # CPU yetmay qolmasin. DIQQAT: egress room-composite uchun 4.0 CPU "cost"
+    # talab qiladi — undan kam limit qo'yilsa yozuv so'rovlarini RAD ETADI
+    cpus: 4
     mem_limit: 2g
     depends_on:
       - redis
