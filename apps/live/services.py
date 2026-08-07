@@ -167,6 +167,15 @@ def record_focus(*, user: User, lesson_id, kind: str) -> dict:
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────
 
 def _livekit_http_url() -> str:
+    """Server-server API chaqiriqlari uchun LiveKit manzili.
+
+    LIVEKIT_API_URL berilgan bo'lsa — o'sha (prod: docker tarmog'i ichidan
+    http://livekit:7880 — Caddy/TLS orqali aylanib yurmaydi). Bo'lmasa
+    LIVEKIT_URL'dan hosil qilinadi (dev).
+    """
+    api_url = getattr(settings, 'LIVEKIT_API_URL', '')
+    if api_url:
+        return api_url
     return settings.LIVEKIT_URL.replace('wss://', 'https://').replace('ws://', 'http://')
 
 

@@ -221,6 +221,8 @@ CSRF_TRUSTED_ORIGINS = [
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', 'devkey')
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', 'devsecret_change_me_32chars_min!')
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', 'ws://localhost:7880')
+# Server-server API (egress/moderation) — prod'da docker ichki manzili
+LIVEKIT_API_URL = os.getenv('LIVEKIT_API_URL', '')
 
 # Dars video yozuvlari (LiveKit Egress fayllari) — auth endpoint orqali beriladi
 RECORDINGS_DIR = Path(os.getenv('RECORDINGS_DIR', BASE_DIR / 'recordings'))
