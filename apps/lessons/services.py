@@ -154,7 +154,13 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
         from .models import LessonRecording
         live_services.stop_recording(lesson=lesson)
         recording = LessonRecording.objects.filter(lesson=lesson).first()
-        if recording is not None and recording.status != LessonRecording.Status.FAILED:
+        # E'lon faqat egress HAQIQATAN boshlanganida — aks holda chatga
+        # "tayyor!" deb yolg'on xabar tushib qoladi
+        if (
+            recording is not None
+            and recording.egress_id
+            and recording.status != LessonRecording.Status.FAILED
+        ):
             title = (recording_title or '').strip() or lesson.title
             recording.title = title[:200]
             recording.save(update_fields=['title', 'updated_at'])
@@ -229,11 +235,27 @@ def recording_info(*, user: User, lesson: Lesson) -> dict:
     # Fayl diskka tushgan bo'lsa — tayyor deb belgilaymiz
     path = _recording_path(recording) if recording.file_name else None
     file_ready = bool(path and path.exists() and path.stat().st_size > 0)
-    if file_ready and recording.status == LessonRecording.Status.RECORDING and (
-        lesson.status == Lesson.Status.FINISHED
-    ):
+    in_progress = recording.status in (
+        LessonRecording.Status.PENDING, LessonRecording.Status.RECORDING,
+    )
+    if file_ready and in_progress and lesson.status == Lesson.Status.FINISHED:
         recording.status = LessonRecording.Status.COMPLETED
         recording.save(update_fields=['status', 'updated_at'])
+    elif in_progress and lesson.status == Lesson.Status.FINISHED and not file_ready:
+        # Dars tugagan, fayl esa 3 daqiqadan beri yo'q — yozuv chiqmagan
+        # (masalan, xonada media bo'lmagan). Abadiy "yozilmoqda" qolib
+        # ketmasin — halol failed holatiga o'tkazamiz.
+        from datetime import timedelta
+
+        from django.utils import timezone as _tz
+        reference = recording.ended_at or recording.updated_at
+        if reference and _tz.now() - reference > timedelta(minutes=3):
+            recording.status = LessonRecording.Status.FAILED
+            recording.error = (
+                "Yozuv fayli yaratilmadi — darsda video/audio bo'lmagan "
+                "bo'lishi mumkin."
+            )
+            recording.save(update_fields=['status', 'error', 'updated_at'])
 
     data = {
         'lesson_id': str(lesson.id),

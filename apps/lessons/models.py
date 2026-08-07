@@ -152,7 +152,8 @@ class LessonRecording(TimeStampedUUIDModel):
     """
 
     class Status(TextChoices):
-        RECORDING = 'recording', 'Yozilmoqda'
+        PENDING = 'pending', 'Boshlanmoqda'       # so'rov yuborildi, egress hali tasdiqlamadi
+        RECORDING = 'recording', 'Yozilmoqda'     # egress tasdiqladi (egress_id bor)
         COMPLETED = 'completed', 'Tayyor'
         FAILED = 'failed', 'Xatolik'
 
@@ -161,7 +162,7 @@ class LessonRecording(TimeStampedUUIDModel):
     title = CharField(max_length=200, blank=True)
     egress_id = CharField(max_length=64, blank=True)
     file_name = CharField(max_length=255, blank=True)
-    status = CharField(max_length=10, choices=Status.choices, default=Status.RECORDING)
+    status = CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     error = TextField(blank=True)
     ended_at = DateTimeField(null=True, blank=True)
 

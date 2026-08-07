@@ -177,7 +177,10 @@ Prod'ga o'xshash muhitda (DEBUG=False + manifest static) lokal tekshirish:
 - ⚠️ Skrinshot/screenrecord taqiqlash — brauzerda IMKONSIZ; yechim: desktop app
   (Electron `setContentProtection`) yoki mobil ilova (`FLAG_SECURE`) — reja
 - ⚠️ Qo'shimcha ekran taqiqlash — brauzerda imkonsiz; desktop app'da amaliy hal bo'ladi
-- ✅ Dars video yozuvi (LiveKit Egress): dars LIVE bo'lganda AVTOMATIK boshlanadi;
+- ✅ Dars video yozuvi (LiveKit Egress): o'qituvchi darsga HAR kirganda
+  kafolatlanadi (boshlaydi yoki aktiv egress'ni topib oladi — restart/qayta
+  kirishga chidamli); holatlar: `pending → recording → completed/failed`,
+  xato matnlari o'zbekcha; e'lon chatga faqat haqiqiy yozuvda tushadi;
   tugatishda o'qituvchi nom beradi (`finish` -> `recording_title`) va yozuv guruh
   chatga e'lon qilinadi (`/recordings/<lesson_id>`); fayl FAQAT platformada
   ochiladi — muddatli imzolangan stream (3 soat), inline pleer, doimiy/ochiq URL

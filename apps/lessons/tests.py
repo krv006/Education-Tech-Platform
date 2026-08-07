@@ -308,9 +308,10 @@ class RecordingTests(APITestCase):
             starts_at=timezone.now(), duration_min=45,
             status=Lesson.Status.LIVE,
         )
-        # Egress yozgan faylni imitatsiya qilamiz
+        # Egress yozgan faylni imitatsiya qilamiz (egress tasdiqlagan holat)
         self.recording = LessonRecording.objects.create(
             lesson=self.lesson, file_name=f'{self.lesson.room_name}.mp4',
+            egress_id='EG_test', status=LessonRecording.Status.RECORDING,
         )
         (Path(self.tmp) / self.recording.file_name).write_bytes(b'\x00' * 2048)
 
@@ -460,3 +461,93 @@ class FocusEscalationTests(APITestCase):
         body = r.json()
         self.assertIsNone(body['exit_count'])
         self.assertFalse(body['parent_notified'])
+
+
+class RecordingLifecycleTests(APITestCase):
+    """Yozuv hayotiy tsikli: yolg'on holatlar yo'q — pending/failed halol,
+    e'lon faqat haqiqiy yozuvda, qotib qolganlar avtomatik yakunlanadi."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson
+
+        self._override = override_settings(RECORDINGS_DIR=Path(tempfile.mkdtemp()))
+        self._override.enable()
+        self.addCleanup(self._override.disable)
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('rl_t', User.Role.TEACHER)
+        self.student = mk('rl_s', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='RL')
+        from apps.chat import services as chat_services
+        chat_services.ensure_course_room(self.course)
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='L', starts_at=timezone.now(),
+            duration_min=45, status=Lesson.Status.LIVE,
+        )
+
+    def test_no_chat_message_when_egress_never_started(self):
+        """Egress boshlanmagan (egress_id yo'q) — chatga yolg'on e'lon tushmaydi."""
+        from apps.chat.models import Message
+
+        from . import services as lesson_services
+        from .models import LessonRecording
+
+        LessonRecording.objects.create(lesson=self.lesson)  # pending, egresssiz
+        before = Message.objects.count()
+        lesson_services.finish_lesson(
+            teacher=self.teacher, lesson=self.lesson, recording_title='X',
+        )
+        recording_msgs = Message.objects.filter(text__contains='/recordings/').count()
+        self.assertEqual(Message.objects.count() - before, 0)
+        self.assertEqual(recording_msgs, 0)
+
+    def test_stale_pending_marked_failed_on_info(self):
+        """Dars tugagan, fayl 3+ daqiqa yo'q — info so'ralganda halol failed."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .models import Lesson, LessonRecording
+
+        recording = LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x', file_name='yoq.mp4',
+        )
+        self.lesson.status = Lesson.Status.FINISHED
+        self.lesson.save(update_fields=['status'])
+        LessonRecording.objects.filter(pk=recording.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=5),
+        )
+
+        from rest_framework.test import APIClient
+        client = APIClient()
+        client.force_authenticate(self.teacher)
+        r = client.get(f'/api/v1/lessons/{self.lesson.id}/recording/')
+        self.assertEqual(r.data['status'], 'failed')
+        self.assertIn('yaratilmadi', r.data['error'])
+
+    def test_friendly_error_mapping(self):
+        from apps.live.services import _friendly_egress_error
+
+        self.assertIn('hech kim ulanmadi', _friendly_egress_error(
+            Exception('twirp error not_found: requested room does not exist')))
+        self.assertIn('avtorizatsiya', _friendly_egress_error(
+            Exception('ServerError(code=unknown, message=, status=401)')))
+        self.assertIn("video/audio bo'lmadi", _friendly_egress_error(
+            Exception('Start signal not received')))
+        self.assertIn('texnik xato', _friendly_egress_error(Exception('boom')))

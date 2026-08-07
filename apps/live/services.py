@@ -61,8 +61,11 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     if is_teacher and lesson.status == Lesson.Status.SCHEDULED:
         lesson.status = Lesson.Status.LIVE
         lesson.save(update_fields=['status'])
-        # Video yozuv avtomatik boshlanadi (EduTech.docx) — fonda, xatosi
-        # darsga xalaqit bermaydi
+    if is_teacher and lesson.status == Lesson.Status.LIVE:
+        # Video yozuv KAFOLATLANADI (EduTech.docx) — har kirishda: birinchi
+        # kirishda boshlaydi, qayta kirsa/backend restart bo'lsa aktiv
+        # egress'ni topib oladi yoki qaytadan boshlaydi. Fonda, xatosi
+        # darsga xalaqit bermaydi.
         start_recording(lesson=lesson)
     if user.role == User.Role.STUDENT:
         lesson_services.mark_joined(lesson=lesson, student=user)
@@ -227,9 +230,32 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
 # (yoki xona bo'shaganda egress o'zi) yakunlanadi. Fayl recordings
 # volume'ida; faqat auth endpoint orqali beriladi (apps/lessons).
 
+def _friendly_egress_error(exc) -> str:
+    """Xom SDK xatosini foydalanuvchi tushunadigan o'zbekcha matnga aylantiradi
+    (frontend `error` maydonini to'g'ridan-to'g'ri ko'rsatadi)."""
+    raw = str(exc)
+    if 'does not exist' in raw:
+        return "Yozuv boshlanmadi: darsga hech kim ulanmadi (xona ochilmadi)."
+    if 'status=401' in raw or 'unauthenticated' in raw.lower():
+        return 'Yozuv xizmati avtorizatsiyadan o\'tmadi — server sozlamalarini tekshiring.'
+    if 'Start signal' in raw:
+        return "Yozuv bekor qilindi: xonada video/audio bo'lmadi."
+    if 'resource' in raw.lower() or 'exhausted' in raw.lower():
+        return "Yozuv xizmati band — birozdan so'ng darsga qayta kiring."
+    return f'Yozuvda texnik xato: {raw[:200]}'
+
+
 def start_recording(*, lesson: Lesson) -> None:
-    """Room composite egress'ni fonda boshlaydi. Xato dars oqimini buzmaydi
-    (masalan, dev muhitida egress konteyneri yo'q bo'lsa status=failed)."""
+    """Dars yozuvini KAFOLATLAYDI (idempotent) — o'qituvchi darsga har kirganda
+    chaqiriladi:
+
+      - xonada allaqachon aktiv egress bo'lsa — o'shani o'zlashtiradi (backend
+        restart / qayta kirish holatlari);
+      - bo'lmasa yangisini boshlaydi (xona ochilguncha 2 daqiqagacha kutadi);
+      - avvalgi urinish FAILED/abort bo'lgan bo'lsa ham qayta uriniladi.
+
+    Xatolar dars oqimini hech qachon buzmaydi (fon thread).
+    """
     import logging
     import threading
 
@@ -238,22 +264,36 @@ def start_recording(*, lesson: Lesson) -> None:
     if not getattr(settings, 'RECORDINGS_AUTO_START', True):
         return  # testlarda o'chirilgan (fon thread + tarmoq kerak emas)
 
-    recording, created = LessonRecording.objects.get_or_create(lesson=lesson)
-    if not created and recording.egress_id:
-        return  # allaqachon yozilyapti
-
-    file_name = f'{lesson.room_name}.mp4'
+    recording, _created = LessonRecording.objects.get_or_create(lesson=lesson)
 
     def _target():
         import time as _time
+        import uuid as _uuid
 
         from django.db import close_old_connections
 
-        # Token berilgan payt o'qituvchi brauzeri hali xonaga ULANMAGAN bo'ladi —
-        # LiveKit xonani birinchi ishtirokchi kirganda yaratadi. Shuning uchun
-        # "room does not exist" xatosida 2 daqiqagacha kutib qayta urinamiz.
-        last_error = None
         try:
+            # 1) Xonada aktiv egress bormi? Bor bo'lsa — o'zlashtiramiz.
+            try:
+                active = asyncio.run(_egress_active(lesson.room_name))
+            except Exception:  # noqa: BLE001 — ro'yxat olinmasa, yangi boshlaymiz
+                active = None
+            if active:
+                LessonRecording.objects.filter(pk=recording.pk).update(
+                    egress_id=active, status=LessonRecording.Status.RECORDING, error='',
+                )
+                return
+
+            # 2) Yangi egress. Fayl nomi har urinishda unikal — avvalgi
+            #    abort qoldig'i ustiga yozilmaydi.
+            file_name = f'{lesson.room_name}-{_uuid.uuid4().hex[:6]}.mp4'
+            LessonRecording.objects.filter(pk=recording.pk).update(
+                status=LessonRecording.Status.PENDING,
+            )
+
+            # Token berilgan payt o'qituvchi brauzeri hali xonaga ULANMAGAN
+            # bo'lishi mumkin — "room does not exist"da 2 daqiqagacha kutamiz.
+            last_error = None
             for _attempt in range(24):
                 try:
                     egress_id = asyncio.run(_egress_start(lesson.room_name, file_name))
@@ -269,12 +309,32 @@ def start_recording(*, lesson: Lesson) -> None:
                     _time.sleep(5)
             logging.getLogger('apps').warning('egress start failed: %s', last_error)
             LessonRecording.objects.filter(pk=recording.pk).update(
-                status=LessonRecording.Status.FAILED, error=str(last_error)[:500],
+                status=LessonRecording.Status.FAILED,
+                error=_friendly_egress_error(last_error),
             )
         finally:
             close_old_connections()
 
     threading.Thread(target=_target, daemon=True).start()
+
+
+async def _egress_active(room_name: str) -> str | None:
+    """Xonadagi aktiv (tugamagan) egress ID sini qaytaradi, bo'lmasa None."""
+    from livekit.protocol.egress import ListEgressRequest
+
+    client = LiveKitAPI(
+        url=_livekit_http_url(),
+        api_key=settings.LIVEKIT_API_KEY,
+        api_secret=settings.LIVEKIT_API_SECRET,
+    )
+    try:
+        result = await client.egress.list_egress(ListEgressRequest(
+            room_name=room_name, active=True,
+        ))
+        items = list(result.items)
+        return items[0].egress_id if items else None
+    finally:
+        await client.aclose()
 
 
 async def _egress_start(room_name: str, file_name: str) -> str:
