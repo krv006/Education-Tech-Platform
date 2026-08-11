@@ -58,6 +58,9 @@ class CourseViewSet(viewsets.ModelViewSet):
             teacher=self.request.user, request=self.request, **serializer.validated_data,
         )
 
+    def perform_destroy(self, instance):
+        services.delete_course(teacher=self.request.user, course=instance, request=self.request)
+
     @action(detail=True, methods=['post'])
     def enroll(self, request, pk=None):
         enrollment, created = services.enroll(

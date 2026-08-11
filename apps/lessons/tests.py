@@ -195,6 +195,60 @@ class CourseLessonFlowTests(APITestCase):
         resp = self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 4})
         self.assertEqual(resp.status_code, 400)
 
+    def test_delete_course_wipes_group_data_keeps_history(self):
+        from apps.board.models import BoardSheet
+        from apps.chat.models import ChatRoom, Message
+
+        from .models import Course, LessonRating
+
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+
+        self.auth(self.child_token)
+        self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
+
+        BoardSheet.objects.create(
+            lesson_id=self.lesson_id, index=0,
+            strokes=[{'id': 'x', 'points': [[0, 0], [1, 1]], 'color': '#000', 'width': 2}],
+        )
+        room = ChatRoom.objects.get(kind=ChatRoom.Kind.COURSE, course_id=self.course_id)
+        teacher = User.objects.get(username='t1')
+        Message.objects.create(room=room, sender=teacher, text='Salom guruh!')
+
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+
+        self.auth(self.child_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5})
+
+        self.assertTrue(Attendance.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertTrue(LessonRating.objects.filter(lesson_id=self.lesson_id).exists())
+
+        self.auth(self.teacher_token)
+        resp = self.client.delete(f'/api/v1/courses/{self.course_id}/')
+        self.assertEqual(resp.status_code, 204)
+
+        # guruh ma'lumotlari butunlay o'chadi
+        self.assertFalse(ChatRoom.objects.filter(course_id=self.course_id).exists())
+        self.assertFalse(BoardSheet.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertFalse(self.client.get(f'/api/v1/courses/{self.course_id}/').json().get('id'))
+
+        # kurs/dars yashiriladi (soft-delete), lekin bazadan o'chmaydi
+        self.assertFalse(Course.objects.filter(pk=self.course_id).exists())
+        self.assertTrue(Course.all_objects.filter(pk=self.course_id).exists())
+
+        # Davomat va baho TARIXI saqlanib qoladi
+        self.assertTrue(Attendance.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertTrue(LessonRating.objects.filter(lesson_id=self.lesson_id).exists())
+
+    def test_other_teacher_cannot_delete_foreign_course(self):
+        register(self.client, 't2', 'teacher')
+        t2_token = login(self.client, 't2')
+        self.auth(t2_token)
+        resp = self.client.delete(f'/api/v1/courses/{self.course_id}/')
+        self.assertEqual(resp.status_code, 404)  # boshqa oquvchining kursi korinmaydi (queryset scoped)
+
 
 class FocusSummaryTests(APITestCase):
     """Chiqish-qaytish tahlili: juftlash, jami/eng uzun vaqt, taymlayn."""

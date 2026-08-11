@@ -202,6 +202,75 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
 
 
 @transaction.atomic
+def delete_course(*, teacher: User, course: Course, request=None) -> None:
+    """Guruhni (kursni) o'chiradi — barcha a'zolar chiqib ketadi, chat/doska/video
+    ma'lumotlari BUTUNLAY o'chadi (fayllar diskdan ham). Davomat va baholar tarix
+    sifatida saqlanadi — shu sabab Kurs/Dars o'zi faqat soft-delete qilinadi
+    (Attendance/LessonRating shularga CASCADE FK bilan bog'langan)."""
+    if course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs egasi guruhni o'chira oladi.")
+
+    lessons = list(course.lessons.all())
+    lesson_ids = [lesson.id for lesson in lessons]
+
+    # Jonli darslar bo'lsa — yozuvni/xonani to'xtatishga urinamiz (best-effort,
+    # LiveKit muammosi o'chirishni to'xtatmasin)
+    from apps.live import services as live_services
+    for lesson in lessons:
+        if lesson.status == Lesson.Status.LIVE:
+            try:
+                live_services.stop_recording(lesson=lesson)
+                live_services.end_room(lesson=lesson)
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger('apps').exception('course delete: live room stop failed')
+
+    # Video yozuvlar — fayl + baza yozuvi butunlay o'chadi
+    from .models import LessonRecording
+    for recording in LessonRecording.objects.filter(lesson_id__in=lesson_ids):
+        if recording.file_name:
+            path = _recording_path(recording)
+            if path.exists():
+                path.unlink()
+        recording.delete()
+
+    # Doska — chizmalar, chizish ruxsatlari, o'chirish jurnali + PDF fayllar
+    from pathlib import Path
+
+    from django.conf import settings as dj_settings
+
+    from apps.board.models import BoardErase, BoardGrant, BoardSheet
+    BoardSheet.objects.filter(lesson_id__in=lesson_ids).delete()
+    BoardGrant.objects.filter(lesson_id__in=lesson_ids).delete()
+    BoardErase.objects.filter(lesson_id__in=lesson_ids).delete()
+    boards_dir = Path(dj_settings.BASE_DIR) / 'private' / 'boards'
+    for lesson_id in lesson_ids:
+        pdf_path = boards_dir / f'{lesson_id}.pdf'
+        if pdf_path.exists():
+            pdf_path.unlink()
+
+    # Chat — guruh xonasi + barcha xabarlar (biriktirilgan fayllar diskdan ham) butunlay o'chadi
+    from apps.chat.models import ChatRoom
+    room = ChatRoom.objects.filter(kind=ChatRoom.Kind.COURSE, course=course).first()
+    if room is not None:
+        for msg in room.messages.exclude(file=''):
+            msg.file.delete(save=False)
+        room.delete()
+
+    # A'zolik — barcha userlar guruhdan chiqib ketadi
+    course.enrollments.all().delete()
+
+    # Kurs/darslar — SOFT delete (Attendance/LessonRating tarixi saqlanishi uchun)
+    course.lessons.update(is_deleted=True, deleted_at=timezone.now())
+    course.delete()
+
+    audit.record(
+        action='course.delete', actor=teacher, target=course,
+        meta={'lesson_count': len(lesson_ids)}, request=request,
+    )
+
+
+@transaction.atomic
 def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', request=None) -> Lesson:
     """Darsni yakunlash — davomatlar yopiladi, doska PDF chatga tushadi,
     video yozuv to'xtatilib O'QITUVCHI BERGAN NOM bilan guruh chatga e'lon qilinadi."""
