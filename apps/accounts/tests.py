@@ -139,18 +139,19 @@ class LoginJournalTests(APITestCase):
         ).json()['id']
         self.client.credentials()
 
-    def _login(self, username, ua):
-        return self.client.post(
-            '/api/v1/auth/login/', {'username': username, 'password': PASSWORD},
-            HTTP_USER_AGENT=ua,
-        )
+    def _login(self, username, ua, force=False):
+        data = {'username': username, 'password': PASSWORD}
+        if force:
+            data['force'] = 'true'
+        return self.client.post('/api/v1/auth/login/', data, HTTP_USER_AGENT=ua)
 
     def test_new_device_flagged(self):
         self._login('lj_s', 'Chrome/Telefon')
-        self._login('lj_s', 'Chrome/Telefon')
-        self._login('lj_s', 'Firefox/Kompyuter')  # qurilma o'zgardi
+        # bitta akkaunt = bitta qurilma — qayta login qilish uchun force kerak
+        self._login('lj_s', 'Chrome/Telefon', force=True)
+        self._login('lj_s', 'Firefox/Kompyuter', force=True)  # qurilma o'zgardi
 
-        token = self._login('lj_s', 'Firefox/Kompyuter').json()['access']
+        token = self._login('lj_s', 'Firefox/Kompyuter', force=True).json()['access']
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
         rows = self.client.get('/api/v1/auth/logins/').json()
         self.assertGreaterEqual(len(rows), 4)
@@ -170,3 +171,60 @@ class LoginJournalTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {p2}')
         r = self.client.get(f'/api/v1/auth/logins/?student={self.child_id}')
         self.assertEqual(r.status_code, 403)
+
+
+class DeviceSessionTests(APITestCase):
+    """Bitta akkaunt = bitta faol qurilma."""
+
+    def setUp(self):
+        register(self.client, 'ds_t', 'teacher')
+
+    def _login(self, ua, force=False):
+        data = {'username': 'ds_t', 'password': PASSWORD}
+        if force:
+            data['force'] = 'true'
+        return self.client.post('/api/v1/auth/login/', data, HTTP_USER_AGENT=ua)
+
+    def test_second_device_blocked_without_force(self):
+        first = self._login('Chrome/Windows')
+        self.assertEqual(first.status_code, 200)
+
+        second = self._login('Firefox/Mac')
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.json()['code'], 'device_conflict')
+        self.assertIn('Chrome', second.json()['device_label'])
+
+    def test_force_login_kicks_old_device_immediately(self):
+        first = self._login('Chrome/Windows')
+        old_access = first.json()['access']
+
+        # eski qurilma hozircha ishlaydi
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {old_access}')
+        self.assertEqual(me.status_code, 200)
+
+        second = self._login('Firefox/Mac', force=True)
+        self.assertEqual(second.status_code, 200)
+        new_access = second.json()['access']
+
+        # eski qurilma DARHOL chiqarib yuborilgan (60 daqiqa kutmasdan)
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {old_access}')
+        self.assertEqual(me.status_code, 401)
+
+        # yangi qurilma ishlayapti
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {new_access}')
+        self.assertEqual(me.status_code, 200)
+
+    def test_current_session_endpoint(self):
+        access = self._login('Chrome/Windows').json()['access']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+        resp = self.client.get('/api/v1/auth/sessions/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('Chrome', resp.json()['device_label'])
+
+    def test_old_refresh_token_blacklisted_after_force_login(self):
+        first = self._login('Chrome/Windows')
+        old_refresh = first.json()['refresh']
+        self._login('Firefox/Mac', force=True)
+
+        resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': old_refresh})
+        self.assertEqual(resp.status_code, 401)

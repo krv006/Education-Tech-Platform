@@ -9,7 +9,9 @@ from django.db.models import (
     CharField,
     DateTimeField,
     ForeignKey,
+    GenericIPAddressField,
     ImageField,
+    OneToOneField,
     TextChoices,
     UniqueConstraint,
     UUIDField,
@@ -101,3 +103,24 @@ class Consent(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} · {self.kind} = {self.granted}'
+
+
+class DeviceSession(TimeStampedUUIDModel):
+    """Foydalanuvchining joriy FAOL sessiyasi — bir vaqtda faqat bitta qurilma
+    ishlaydi. Yangi login (force=true) eskisini blacklist qilib almashtiradi.
+
+    `session_jti` — login paytida yaratilgan refresh tokenning ID'si. Refresh
+    tokenni yangilash (rotation) davomida ham shu claim o'zgarmay saqlanadi
+    (SimpleJWT payload'ni ko'chiradi) — shuning uchun bu butun sessiya davomida
+    barqaror identifikator bo'lib xizmat qiladi.
+    """
+
+    user = OneToOneField('accounts.User', CASCADE, related_name='device_session')
+    session_jti = CharField(max_length=64, unique=True)
+    device_label = CharField(max_length=200, blank=True)
+    user_agent = CharField(max_length=300, blank=True)
+    ip_address = GenericIPAddressField(null=True, blank=True)
+    last_seen_at = DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.user.username} · {self.device_label}'
