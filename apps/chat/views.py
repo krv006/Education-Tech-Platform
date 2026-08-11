@@ -1,8 +1,11 @@
 """Chat views — yupqa qatlam: HTTP <-> chat services/selectors."""
 from django.db.models import Prefetch
+from django.http import FileResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.core.permissions import RequirePerm
 
@@ -73,6 +76,14 @@ class ChatRoomViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response(ChatRoomSerializer(room, context={'request': request}).data)
 
+    @action(detail=True, methods=['post'], url_path='image')
+    def set_image(self, request, pk=None):
+        """Guruh (kurs) chat rasmini o'rnatadi — faqat kurs o'qituvchisi."""
+        room = services.set_group_image(
+            teacher=request.user, room_id=pk, image=request.FILES.get('image'), request=request,
+        )
+        return Response(ChatRoomSerializer(room, context={'request': request}).data)
+
     @action(detail=False)
     def teachers(self, request):
         """O'quvchining o'qituvchilari — yangi direct so'rov yuborish ro'yxati uchun."""
@@ -97,3 +108,24 @@ class ChatRoomViewSet(viewsets.ReadOnlyModelViewSet):
                 'room_id': str(room.id) if room else None,
             })
         return Response(data)
+
+
+class ChatFileView(APIView):
+    """Chat xabariga biriktirilgan faylni himoyalangan holatda beradi."""
+
+    permission_classes = [RequirePerm('chat.use')]
+
+    def get(self, request, message_id):
+        try:
+            msg = Message.objects.select_related('room').get(pk=message_id)
+        except (Message.DoesNotExist, ValueError, TypeError):
+            raise NotFound('Xabar topilmadi.')
+        if not selectors.can_read(request.user, msg.room):
+            raise PermissionDenied('Ruxsat yo\'q.')
+        if not msg.file:
+            raise NotFound('Fayl yo\'q.')
+        resp = FileResponse(msg.file.open('rb'), content_type='application/pdf')
+        resp['Content-Disposition'] = f'inline; filename="{msg.file.name.split("/")[-1]}"'
+        resp['Cache-Control'] = 'no-store'
+        resp['X-Content-Type-Options'] = 'nosniff'
+        return resp

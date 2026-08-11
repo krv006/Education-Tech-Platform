@@ -77,7 +77,7 @@ class BoardTests(TestCase):
         self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/finish/')
         msg = Message.objects.filter(room=self.course.chat_room).last()
         self.assertIsNotNone(msg)
-        self.assertIn(f'/boards/{self.lesson.id}', msg.text)
+        self.assertTrue(msg.file)
         # PDF autentifikatsiya bilan yuklab olinadi
         r = self.api(self.student).get(self.url('pdf/'))
         self.assertEqual(r.status_code, 200)

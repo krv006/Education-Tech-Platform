@@ -10,7 +10,9 @@ from django.db.models import (
     CASCADE,
     CharField,
     DateTimeField,
+    FileField,
     ForeignKey,
+    ImageField,
     Index,
     OneToOneField,
     Q,
@@ -47,6 +49,8 @@ class ChatRoom(TimeStampedUUIDModel):
     direct_status = CharField(
         max_length=8, choices=DirectStatus.choices, default=DirectStatus.ACTIVE, db_index=True,
     )
+    # kind=COURSE guruh rasmi — faqat o'qituvchi o'zgartira oladi
+    image = ImageField(upload_to='group_images/', null=True, blank=True)
 
     class Meta:
         ordering = ['-updated_at']
@@ -74,6 +78,7 @@ class Message(TimeStampedUUIDModel):
     room = ForeignKey('chat.ChatRoom', CASCADE, related_name='messages')
     sender = ForeignKey('accounts.User', CASCADE, related_name='chat_messages')
     text = TextField()
+    file = FileField(upload_to='chat_files/', blank=True)
 
     class Meta:
         ordering = ['created_at']

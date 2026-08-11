@@ -38,7 +38,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     },
     STUDENT: {
         'course.view', 'course.enroll',
-        'lesson.view',
+        'lesson.view', 'lesson.rate',
         'room.token', 'room.leave',
         'link.respond',
         'attendance.view',

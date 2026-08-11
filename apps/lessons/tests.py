@@ -139,6 +139,62 @@ class CourseLessonFlowTests(APITestCase):
         self.assertFalse(Course.objects.filter(pk=self.course_id).exists())
         self.assertTrue(Course.all_objects.filter(pk=self.course_id).exists())
 
+    def test_schedule_recurring_creates_lessons(self):
+        self.auth(self.teacher_token)
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Haftalik dars',
+            'days': [0, 2, 4],
+            'start_time': '10:00',
+            'end_time': '11:00',
+            'weeks': 2,
+            'start_date': '2026-09-07',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['count'], 6)
+
+    def test_schedule_recurring_detects_overlap(self):
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Dars A',
+            'days': [0],
+            'start_time': '14:00',
+            'end_time': '15:00',
+            'weeks': 1,
+            'start_date': '2026-09-07',
+        }, format='json')
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Dars B',
+            'days': [0],
+            'start_time': '14:30',
+            'end_time': '15:30',
+            'weeks': 1,
+            'start_date': '2026-09-07',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rate_finished_lesson(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+
+        self.auth(self.child_token)
+        resp = self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5, 'description': 'Zo\'r!'})
+        self.assertEqual(resp.status_code, 201)
+
+        resp = self.client.get(f'/api/v1/lessons/{self.lesson_id}/')
+        self.assertEqual(resp.json()['avg_rating'], 5.0)
+        self.assertEqual(resp.json()['rating_count'], 1)
+
+    def test_cannot_rate_unfinished_lesson(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+        self.auth(self.child_token)
+        resp = self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 4})
+        self.assertEqual(resp.status_code, 400)
+
 
 class FocusSummaryTests(APITestCase):
     """Chiqish-qaytish tahlili: juftlash, jami/eng uzun vaqt, taymlayn."""

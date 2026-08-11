@@ -7,7 +7,7 @@ from .models import Consent, ParentChildLink, User
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'role', 'phone', 'invite_code']
+        fields = ['id', 'username', 'first_name', 'last_name', 'role', 'phone', 'invite_code', 'avatar']
         read_only_fields = ['role', 'invite_code']
 
 

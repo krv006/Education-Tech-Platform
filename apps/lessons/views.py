@@ -3,7 +3,7 @@ from django.db.models import Q
 from django.http import FileResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -17,7 +17,10 @@ from .serializers import (
     AttendanceSerializer,
     CourseSerializer,
     EnrollmentSerializer,
+    LessonRatingSerializer,
     LessonSerializer,
+    RateLessonSerializer,
+    ScheduleLessonsSerializer,
 )
 
 
@@ -35,6 +38,8 @@ class CourseViewSet(viewsets.ModelViewSet):
             return [RequirePerm('course.enroll')()]
         if self.action in ('requests', 'respond_request'):
             return [RequirePerm('course.edit')()]  # faqat o'qituvchi (o'z kurslari service'da tekshiriladi)
+        if self.action == 'schedule':
+            return [RequirePerm('lesson.schedule')()]
         return [IsAuthenticated()]
 
     def get_queryset(self):
@@ -96,6 +101,21 @@ class CourseViewSet(viewsets.ModelViewSet):
         )
         return Response(EnrollmentSerializer(enrollment).data)
 
+    @action(detail=True, methods=['post'])
+    def schedule(self, request, pk=None):
+        """Haftalik jadval asosida ko'plab darslarni avtomatik yaratadi."""
+        course = self.get_object()
+        ser = ScheduleLessonsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        lessons = services.schedule_recurring(
+            teacher=request.user, course=course, request=request,
+            **ser.validated_data,
+        )
+        return Response(
+            {'count': len(lessons), 'lessons': LessonSerializer(lessons, many=True).data},
+            status=status.HTTP_201_CREATED,
+        )
+
     @action(detail=True, url_path='search-students')
     def search_students(self, request, pk=None):
         """Jonli qidiruv (EduTech.docx: username orqali bazadan search) —
@@ -143,6 +163,8 @@ class LessonViewSet(viewsets.ModelViewSet):
             return [RequirePerm('lesson.edit')()]
         if self.action == 'finish':
             return [RequirePerm('lesson.finish')()]
+        if self.action == 'rate':
+            return [RequirePerm('lesson.rate')()]
         if self.action == 'recording_stream':
             # Video oqimi imzolangan muddatli token bilan himoyalangan —
             # <video src> Authorization header yubora olmaydi
@@ -170,6 +192,34 @@ class LessonViewSet(viewsets.ModelViewSet):
             request=request,
         )
         return Response(LessonSerializer(lesson).data)
+
+    @action(detail=True, methods=['post'])
+    def rate(self, request, pk=None):
+        lesson = self.get_object()
+        if lesson.status != 'finished':
+            raise ValidationError('Faqat tugagan darsga baho berish mumkin.')
+        if not lesson.course.enrollments.filter(
+            student=request.user, status=Enrollment.Status.APPROVED,
+        ).exists():
+            raise PermissionDenied("Siz bu kursga yozilmagansiz.")
+        ser = RateLessonSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        from .models import LessonRating
+        rating, created = LessonRating.objects.update_or_create(
+            lesson=lesson, student=request.user,
+            defaults=ser.validated_data,
+        )
+        return Response(
+            LessonRatingSerializer(rating).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @action(detail=True)
+    def ratings(self, request, pk=None):
+        lesson = self.get_object()
+        qs = lesson.ratings.select_related('student').order_by('-created_at')
+        page = self.paginate_queryset(qs)
+        return self.get_paginated_response(LessonRatingSerializer(page, many=True).data)
 
     @action(detail=True, methods=['get', 'delete'], url_path='recording')
     def recording(self, request, pk=None):

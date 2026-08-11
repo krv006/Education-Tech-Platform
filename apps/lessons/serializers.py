@@ -3,7 +3,7 @@ from rest_framework import serializers
 from apps.accounts.serializers import UserSerializer
 
 from . import selectors
-from .models import Attendance, Course, Enrollment, Lesson
+from .models import Attendance, Course, Enrollment, Lesson, LessonRating
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -33,14 +33,59 @@ class CourseSerializer(serializers.ModelSerializer):
 
 class LessonSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
+    avg_rating = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Lesson
         fields = [
             'id', 'course', 'course_title', 'title', 'starts_at',
             'duration_min', 'status', 'room_name', 'created_at',
+            'avg_rating', 'rating_count',
         ]
         read_only_fields = ['room_name', 'status']
+
+    def get_avg_rating(self, obj) -> float | None:
+        from django.db.models import Avg
+        result = obj.ratings.aggregate(avg=Avg('stars'))['avg']
+        return round(result, 1) if result else None
+
+    def get_rating_count(self, obj) -> int:
+        return obj.ratings.count()
+
+
+class LessonRatingSerializer(serializers.ModelSerializer):
+    student = UserSerializer(read_only=True)
+
+    class Meta:
+        model = LessonRating
+        fields = ['id', 'lesson', 'student', 'stars', 'description', 'created_at']
+        read_only_fields = ['lesson']
+
+
+class RateLessonSerializer(serializers.Serializer):
+    stars = serializers.IntegerField(min_value=1, max_value=5)
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ScheduleLessonsSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    days = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=6),
+        min_length=1, max_length=7,
+    )
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
+    weeks = serializers.IntegerField(min_value=1, max_value=52)
+    start_date = serializers.DateField()
+    note = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate(self, data):
+        if data['end_time'] <= data['start_time']:
+            raise serializers.ValidationError(
+                {'end_time': "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak."},
+            )
+        return data
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):

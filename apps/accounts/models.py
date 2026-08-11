@@ -9,6 +9,7 @@ from django.db.models import (
     CharField,
     DateTimeField,
     ForeignKey,
+    ImageField,
     TextChoices,
     UniqueConstraint,
     UUIDField,
@@ -35,6 +36,7 @@ class User(AbstractUser):
     phone = CharField(max_length=20, unique=True, null=True, blank=True)
     # Student's invite code — parent enters it to request a link (consent flow).
     invite_code = CharField(max_length=12, unique=True, null=True, blank=True)
+    avatar = ImageField(upload_to='avatars/', null=True, blank=True)
     created_at = DateTimeField(auto_now_add=True)
     updated_at = DateTimeField(auto_now=True)
 

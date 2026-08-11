@@ -384,24 +384,28 @@ def generate_pdf(lesson: Lesson):
 
 
 def publish_board_pdf(lesson: Lesson):
-    """finish_lesson'dan chaqiriladi: PDF yaratib, guruh chatga xabar tashlaydi.
+    """finish_lesson'dan chaqiriladi: PDF yaratib, guruh chatga FAYL sifatida tashlaydi
+    (nusxa ko'chirish/yuklab olishdan himoyalangan — faqat platforma ichida ochiladi).
 
     Doska bo'sh bo'lsa jim o'tadi; xato dars yakunlashni to'xtatmasligi kerak.
     """
     path = generate_pdf(lesson)
     if path is None:
         return
+    from django.core.files import File
+
     from apps.chat import services as chat_services
     from apps.chat.models import Message
+
     room = chat_services.ensure_course_room(lesson.course)
-    Message.objects.create(
+    msg = Message(
         room=room,
         sender=lesson.course.teacher,
-        text=(
-            f"📋 \"{lesson.title}\" darsining doskasi tayyor!\n"
-            f"Ko'rish va PDF: /boards/{lesson.id}"
-        ),
+        text=f'📋 "{lesson.title}" doskasi',
     )
+    with open(path, 'rb') as f:
+        msg.file.save(f'doska_{lesson.id}.pdf', File(f), save=False)
+    msg.save()
     room.save(update_fields=['updated_at'])
 
 

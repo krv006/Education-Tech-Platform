@@ -1,3 +1,7 @@
+import io
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 from rest_framework.test import APITestCase
 
 from .models import ParentChildLink, User
@@ -39,6 +43,21 @@ class AuthTests(APITestCase):
         self.assertFalse(body['success'])
         self.assertIn('code', body['error'])
         self.assertIn('message', body['error'])
+
+    def test_update_avatar(self):
+        register(self.client, 'teacher2', 'teacher')
+        token = login(self.client, 'teacher2')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+        buf = io.BytesIO()
+        Image.new('RGB', (10, 10), 'red').save(buf, format='PNG')
+        avatar = SimpleUploadedFile('avatar.png', buf.getvalue(), content_type='image/png')
+        resp = self.client.patch(
+            '/api/v1/auth/me/', {'avatar': avatar}, format='multipart',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['avatar'])
+        self.assertIn('/media/avatars/', resp.json()['avatar'])
 
 
 class LinkFlowTests(APITestCase):

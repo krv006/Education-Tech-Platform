@@ -1,7 +1,10 @@
 """Chat oqimi testlari — guruh, direct so'rov/qabul/block, ruxsatlar, WebSocket."""
+import io
+
 from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
 from django.test import TestCase, TransactionTestCase
+from PIL import Image
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
@@ -16,6 +19,13 @@ def make(username, role):
     u.set_password('x')
     u.save()
     return u
+
+
+def make_image():
+    buf = io.BytesIO()
+    Image.new('RGB', (10, 10), 'blue').save(buf, format='PNG')
+    buf.seek(0)
+    return buf
 
 
 class ChatFlowTests(TestCase):
@@ -85,6 +95,21 @@ class ChatFlowTests(TestCase):
     def test_parent_has_no_chat(self):
         parent = make('p1', User.Role.PARENT)
         r = self.api(parent).get('/api/v1/chat/rooms/')
+        self.assertEqual(r.status_code, 403)
+
+    def test_teacher_sets_group_image(self):
+        room = self.course.chat_room
+        r = self.api(self.teacher).post(
+            f'/api/v1/chat/rooms/{room.id}/image/', {'image': make_image()}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('/media/group_images/', r.data['image'])
+
+    def test_student_cannot_set_group_image(self):
+        room = self.course.chat_room
+        r = self.api(self.student).post(
+            f'/api/v1/chat/rooms/{room.id}/image/', {'image': make_image()}, format='multipart',
+        )
         self.assertEqual(r.status_code, 403)
 
 

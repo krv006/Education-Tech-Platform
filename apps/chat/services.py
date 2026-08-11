@@ -48,6 +48,20 @@ def send_message(*, user: User, room_id, text: str) -> Message:
     return message
 
 
+@transaction.atomic
+def set_group_image(*, teacher: User, room_id, image, request=None) -> ChatRoom:
+    """Guruh (kurs) chat rasmini o'rnatadi — faqat kurs egasi o'qituvchi."""
+    if not image:
+        raise ValidationError({'image': 'Rasm fayli kerak.'})
+    room = _get_room(room_id)
+    if room.kind != ChatRoom.Kind.COURSE or room.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi guruh rasmini o'zgartira oladi.")
+    room.image = image
+    room.save(update_fields=['image', 'updated_at'])
+    audit.record(action='chat.group_image_set', actor=teacher, target=room, request=request)
+    return room
+
+
 def mark_read(*, user: User, room: ChatRoom):
     RoomRead.objects.update_or_create(
         room=room, user=user, defaults={'last_read_at': timezone.now()},

@@ -1,7 +1,9 @@
 """Lessons service layer — kurs/dars/yozilish bo'yicha yozuvchi biznes-logika."""
+import uuid
+
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts import selectors as account_selectors
 from apps.accounts.models import User
@@ -27,6 +29,74 @@ def schedule_lesson(*, teacher: User, course: Course, request=None, **data) -> L
     lesson = Lesson.objects.create(course=course, **data)
     audit.record(action='lesson.schedule', actor=teacher, target=lesson, request=request)
     return lesson
+
+
+@transaction.atomic
+def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[int],
+                       start_time, end_time, weeks: int, start_date, note: str = '',
+                       request=None) -> list[Lesson]:
+    """Haftalik jadval asosida ko'plab darslarni bir yo'la yaratadi.
+
+    O'qituvchining BOSHQA kurslari bilan ham (masalan ingliz tili + matematika)
+    vaqt ustma-ust tushmasligini tekshiradi — course__teacher bo'yicha, faqat
+    joriy kurs emas.
+    """
+    from datetime import datetime, timedelta
+
+    if course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs egasi dars qo'sha oladi.")
+
+    duration_min = int(
+        (datetime.combine(start_date, end_time) - datetime.combine(start_date, start_time)).total_seconds() // 60,
+    )
+
+    week_start = start_date - timedelta(days=start_date.weekday())
+    slots = []
+    for week in range(weeks):
+        for day in sorted(set(days)):
+            lesson_date = week_start + timedelta(weeks=week, days=day)
+            if lesson_date < start_date:
+                continue
+            slots.append(timezone.make_aware(datetime.combine(lesson_date, start_time)))
+
+    if not slots:
+        raise ValidationError("Berilgan parametrlar bo'yicha hech qanday dars yaratilmaydi.")
+
+    existing = list(Lesson.objects.filter(
+        course__teacher=teacher,
+        status__in=[Lesson.Status.SCHEDULED, Lesson.Status.LIVE],
+        starts_at__range=(slots[0] - timedelta(hours=24), slots[-1] + timedelta(minutes=duration_min)),
+    ).values('title', 'starts_at', 'duration_min'))
+
+    conflicts = []
+    for new_start in slots:
+        new_end = new_start + timedelta(minutes=duration_min)
+        for ex in existing:
+            ex_end = ex['starts_at'] + timedelta(minutes=ex['duration_min'])
+            if ex['starts_at'] < new_end and ex_end > new_start:
+                conflicts.append({
+                    'date': new_start.strftime('%Y-%m-%d'),
+                    'time': f"{new_start.strftime('%H:%M')}-{new_end.strftime('%H:%M')}",
+                    'existing': ex['title'],
+                })
+                break
+
+    if conflicts:
+        raise ValidationError({'conflicts': conflicts})
+
+    lessons = Lesson.objects.bulk_create([
+        Lesson(
+            course=course, title=title, starts_at=s, duration_min=duration_min,
+            room_name=f'lesson-{uuid.uuid4().hex[:12]}',
+        )
+        for s in slots
+    ])
+    audit.record(
+        action='lesson.schedule_recurring', actor=teacher, target=course,
+        meta={'count': len(lessons), 'weeks': weeks, 'days': days, 'note': note},
+        request=request,
+    )
+    return lessons
 
 
 def _get_course(course_id) -> Course:

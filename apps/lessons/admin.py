@@ -8,6 +8,7 @@ from .models import (
     FocusAlert,
     FocusEvent,
     Lesson,
+    LessonRating,
     LessonRecording,
 )
 
@@ -52,6 +53,13 @@ class AttentionCheckAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description='Javob berdi')
     def answered(self, obj):
         return obj.answered_at is not None
+
+
+@admin.register(LessonRating)
+class LessonRatingAdmin(admin.ModelAdmin):
+    list_display = ['lesson', 'student', 'stars', 'created_at']
+    list_filter = ['stars']
+    search_fields = ['lesson__title', 'student__username']
 
 
 @admin.register(LessonRecording)
