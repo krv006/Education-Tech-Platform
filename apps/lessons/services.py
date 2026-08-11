@@ -50,6 +50,7 @@ def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[
         (datetime.combine(start_date, end_time) - datetime.combine(start_date, start_time)).total_seconds() // 60,
     )
 
+    now = timezone.now()
     week_start = start_date - timedelta(days=start_date.weekday())
     slots = []
     for week in range(weeks):
@@ -57,7 +58,10 @@ def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[
             lesson_date = week_start + timedelta(weeks=week, days=day)
             if lesson_date < start_date:
                 continue
-            slots.append(timezone.make_aware(datetime.combine(lesson_date, start_time)))
+            slot = timezone.make_aware(datetime.combine(lesson_date, start_time))
+            if slot < now:  # bugungi kun uchun soat allaqachon o'tib ketgan bo'lishi mumkin
+                continue
+            slots.append(slot)
 
     if not slots:
         raise ValidationError("Berilgan parametrlar bo'yicha hech qanday dars yaratilmaydi.")

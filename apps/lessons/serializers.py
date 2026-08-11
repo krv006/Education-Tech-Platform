@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
@@ -45,6 +46,13 @@ class LessonSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['room_name', 'status']
 
+    def validate_starts_at(self, value):
+        # Faqat YANGI dars yaratishda tekshiramiz — mavjud (o'tgan) darsni
+        # boshqa maydon bo'yicha tahrirlash bloklanib qolmasin.
+        if self.instance is None and value < timezone.now():
+            raise serializers.ValidationError("Dars boshlanish vaqti o'tgan bo'lishi mumkin emas.")
+        return value
+
     def get_avg_rating(self, obj) -> float | None:
         from django.db.models import Avg
         result = obj.ratings.aggregate(avg=Avg('stars'))['avg']
@@ -84,6 +92,10 @@ class ScheduleLessonsSerializer(serializers.Serializer):
         if data['end_time'] <= data['start_time']:
             raise serializers.ValidationError(
                 {'end_time': "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak."},
+            )
+        if data['start_date'] < timezone.now().date():
+            raise serializers.ValidationError(
+                {'start_date': "Boshlanish sanasi o'tgan bo'lishi mumkin emas."},
             )
         return data
 
