@@ -11,17 +11,26 @@ class CourseSerializer(serializers.ModelSerializer):
     teacher = UserSerializer(read_only=True)
     student_count = serializers.SerializerMethodField()
     my_status = serializers.SerializerMethodField()
+    is_language_subject = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
         fields = [
             'id', 'teacher', 'title', 'subject', 'description', 'is_active',
-            'student_count', 'my_status', 'created_at',
+            'student_count', 'my_status', 'is_language_subject', 'created_at',
         ]
         read_only_fields = ['is_active']
 
     def get_student_count(self, obj) -> int:
         return obj.enrollments.filter(status=Enrollment.Status.APPROVED).count()
+
+    def get_is_language_subject(self, obj) -> bool:
+        """Til fani (ingliz/rus/turk...) bo'lsa true — frontend vazifa
+        yaratishda "tekshiruv turi" (writing/reading/listening/speaking)
+        maydonini faqat shu holatda ko'rsatishi kerak."""
+        from apps.homework.ai import detect_profile
+        _, _, language_key = detect_profile(obj.subject)
+        return bool(language_key)
 
     def get_my_status(self, obj) -> str | None:
         """So'rov yuborgan foydalanuvchining shu kursdagi yozilish holati (katalog uchun)."""

@@ -9,6 +9,7 @@ Oqim:
 from django.conf import settings
 from django.db.models import (
     CASCADE,
+    SET_NULL,
     CharField,
     DateTimeField,
     FileField,
@@ -26,6 +27,11 @@ class Assignment(TimeStampedUUIDModel):
     """O'qituvchi bergan uy vazifasi. Fan kursdan olinadi (course.subject)."""
 
     course = ForeignKey('lessons.Course', CASCADE, related_name='assignments')
+    # Vazifa qaysi (tugagan) darsga/mavzuga tegishli — ixtiyoriy, bir dars
+    # bo'yicha bir nechta vazifa berish mumkin (FK, cheklovsiz).
+    lesson = ForeignKey(
+        'lessons.Lesson', SET_NULL, null=True, blank=True, related_name='assignments',
+    )
     title = CharField(max_length=200)
     description = TextField(blank=True)
     # O'qituvchi rich editor'da yozgan vazifa matni — server tomonda

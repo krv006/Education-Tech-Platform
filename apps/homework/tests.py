@@ -9,10 +9,11 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import ParentChildLink, User
-from apps.lessons.models import Course, Enrollment
+from apps.lessons.models import Course, Enrollment, Lesson
 
 from . import ai
 from .models import Submission
@@ -102,6 +103,48 @@ class HomeworkTests(TestCase):
     def test_bad_skill_key_rejected(self):
         r = self.create_assignment(skill_key='talking')
         self.assertEqual(r.status_code, 400)
+
+    def test_assignment_linked_to_finished_lesson(self):
+        lesson = Lesson.objects.create(
+            course=self.course, title="O'tilgan dars", starts_at=timezone.now(),
+            duration_min=45, status='finished',
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['lesson_id'], str(lesson.id))
+        self.assertEqual(r.data['lesson_title'], "O'tilgan dars")
+
+        # bitta darsga bir nechta vazifa berish mumkin
+        r2 = self.create_assignment(lesson_id=str(lesson.id), title='Ikkinchi vazifa')
+        self.assertEqual(r2.status_code, 201)
+
+    def test_unfinished_lesson_rejected(self):
+        lesson = Lesson.objects.create(
+            course=self.course, title='Kelayotgan dars', starts_at=timezone.now(),
+            duration_min=45,
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 400)
+
+    def test_foreign_course_lesson_rejected(self):
+        other_course = Course.objects.create(
+            teacher=self.other_teacher, title='Boshqa kurs', subject='Fizika',
+        )
+        lesson = Lesson.objects.create(
+            course=other_course, title='Boshqa dars', starts_at=timezone.now(),
+            duration_min=45, status='finished',
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 404)
+
+    def test_course_serializer_is_language_subject(self):
+        eng = Course.objects.create(
+            teacher=self.teacher, title='English A1', subject='Ingliz tili',
+        )
+        r = self.api(self.teacher).get('/api/v1/courses/')
+        by_id = {c['id']: c for c in r.data['results']}
+        self.assertTrue(by_id[str(eng.id)]['is_language_subject'])
+        self.assertFalse(by_id[str(self.course.id)]['is_language_subject'])
 
     # ── topshirish + AI ──
     @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)

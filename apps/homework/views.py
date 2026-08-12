@@ -35,6 +35,7 @@ class AssignmentListCreateView(APIView):
             body=request.data.get('body') or '',
             due_at=request.data.get('due_at') or None,
             skill_key=request.data.get('skill_key') or '',
+            lesson_id=request.data.get('lesson_id') or None,
             extra_instructions=request.data.get('extra_instructions') or '',
             attachment=request.FILES.get('attachment'),
         )

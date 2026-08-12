@@ -15,7 +15,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts.models import ParentChildLink, User
-from apps.lessons.models import Course, Enrollment
+from apps.lessons.models import Course, Enrollment, Lesson
 
 from . import ai
 from .models import Assignment, Submission
@@ -62,7 +62,7 @@ def _get_course(course_id) -> Course:
 
 def _get_assignment(assignment_id) -> Assignment:
     try:
-        return Assignment.objects.select_related('course').get(pk=assignment_id)
+        return Assignment.objects.select_related('course', 'lesson').get(pk=assignment_id)
     except (Assignment.DoesNotExist, ValueError, TypeError):
         raise NotFound('Vazifa topilmadi.')
 
@@ -113,6 +113,8 @@ def _assignment_dict(a: Assignment) -> dict:
         'has_attachment': bool(a.attachment),
         'due_at': a.due_at,
         'skill_key': a.skill_key,
+        'lesson_id': str(a.lesson_id) if a.lesson_id else None,
+        'lesson_title': a.lesson.title if a.lesson_id else None,
         'created_at': a.created_at,
     }
 
@@ -153,8 +155,21 @@ def _parse_due(due_at):
     return due_at
 
 
+def _resolve_lesson(*, course: Course, lesson_id) -> Lesson | None:
+    """Vazifa bog'lanadigan dars — faqat shu kursning TUGAGAN darsi bo'lishi kerak."""
+    if not lesson_id:
+        return None
+    try:
+        lesson = Lesson.objects.get(pk=lesson_id, course=course)
+    except (Lesson.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Dars topilmadi.')
+    if lesson.status != Lesson.Status.FINISHED:
+        raise ValidationError({'lesson_id': "Faqat tugagan darsga vazifa bog'lash mumkin."})
+    return lesson
+
+
 def create_assignment(*, teacher: User, course_id, title: str, description: str = '',
-                      body: str = '', due_at=None, skill_key: str = '',
+                      body: str = '', due_at=None, skill_key: str = '', lesson_id=None,
                       extra_instructions: str = '', attachment=None) -> dict:
     course = _get_course(course_id)
     if course.teacher_id != teacher.id:
@@ -164,6 +179,7 @@ def create_assignment(*, teacher: User, course_id, title: str, description: str 
     skill_key = (skill_key or '').strip().lower()
     if skill_key and skill_key not in ai.SKILLS:
         raise ValidationError({'skill_key': f"Noto'g'ri ko'nikma: {sorted(ai.SKILLS)}"})
+    lesson = _resolve_lesson(course=course, lesson_id=lesson_id)
 
     attachment_name = ''
     if attachment is not None:
@@ -178,6 +194,7 @@ def create_assignment(*, teacher: User, course_id, title: str, description: str 
 
     assignment = Assignment.objects.create(
         course=course,
+        lesson=lesson,
         title=title.strip(),
         description=(description or '').strip(),
         body=sanitize_html(body),
@@ -211,7 +228,7 @@ def list_assignments(*, user: User, course_id) -> list:
     if not _can_view_course(user, course):
         raise PermissionDenied("Bu kurs vazifalarini ko'rish huquqingiz yo'q.")
     result = []
-    for a in course.assignments.all():
+    for a in course.assignments.select_related('lesson').all():
         item = _assignment_dict(a)
         if course.teacher_id == user.id:
             item['submissions_count'] = a.submissions.count()
