@@ -9,6 +9,7 @@ Oqim:
 from django.conf import settings
 from django.db.models import (
     CASCADE,
+    SET_NULL,
     CharField,
     DateTimeField,
     FileField,
@@ -26,6 +27,11 @@ class Assignment(TimeStampedUUIDModel):
     """O'qituvchi bergan uy vazifasi. Fan kursdan olinadi (course.subject)."""
 
     course = ForeignKey('lessons.Course', CASCADE, related_name='assignments')
+    # Vazifa qaysi (tugagan) darsga/mavzuga tegishli — ixtiyoriy, bir dars
+    # bo'yicha bir nechta vazifa berish mumkin (FK, cheklovsiz).
+    lesson = ForeignKey(
+        'lessons.Lesson', SET_NULL, null=True, blank=True, related_name='assignments',
+    )
     title = CharField(max_length=200)
     description = TextField(blank=True)
     # O'qituvchi rich editor'da yozgan vazifa matni — server tomonda
@@ -50,23 +56,42 @@ class Assignment(TimeStampedUUIDModel):
 
 
 class Submission(TimeStampedUUIDModel):
-    """O'quvchining topshirig'i + AI tekshiruv natijasi."""
+    """O'quvchining topshirig'i + AI tekshiruv natijasi.
+
+    Oqim: AI tekshirgach status PENDING_REVIEW bo'ladi — bu bosqichda
+    `result`/`overall_score`/`grade` AI TAKLIFI (AI natijasidan nusxa),
+    lekin o'quvchiga hali ko'rsatilmaydi. O'qituvchi ko'rib chiqadi,
+    xohlasa tahrirlaydi va tasdiqlaydi — shundagina status DONE bo'ladi
+    va natija o'quvchiga ochiladi. AI'ning ASL (o'zgarmas) natijasi
+    `ai_result`/`ai_overall_score`/`ai_grade`da fon/log sifatida saqlanadi.
+    """
 
     class Status(TextChoices):
         CHECKING = 'checking', 'Tekshirilmoqda'
-        DONE = 'done', 'Tekshirildi'
+        PENDING_REVIEW = 'pending_review', "O'qituvchi ko'rib chiqishi kutilmoqda"
+        DONE = 'done', 'Tasdiqlangan'
         ERROR = 'error', 'Xatolik'
 
     assignment = ForeignKey('homework.Assignment', CASCADE, related_name='submissions')
     student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='homework_submissions')
     file = FileField(upload_to='homework/%Y/%m/')
     original_name = CharField(max_length=255)
-    status = CharField(max_length=10, choices=Status.choices, default=Status.CHECKING, db_index=True)
-    # AI javobi — AI-home-checker JSON sxemasi:
-    # {overall_score, grade, questions: [...], summary: {...}}
+    status = CharField(max_length=15, choices=Status.choices, default=Status.CHECKING, db_index=True)
+    # Yakuniy (hozirgi) natija — dastlab AI'nikidan nusxa, o'qituvchi
+    # tasdiqlashda ustidan yozishi mumkin. Shu maydonlar o'quvchiga ko'rinadi.
     result = JSONField(null=True, blank=True)
     overall_score = FloatField(null=True, blank=True)
     grade = CharField(max_length=40, blank=True)
+    # AI'ning ASL natijasi — o'zgarmas, faqat audit/taqqoslash uchun
+    # (o'qituvchiga ko'rinadi, o'quvchiga emas).
+    ai_result = JSONField(null=True, blank=True)
+    ai_overall_score = FloatField(null=True, blank=True)
+    ai_grade = CharField(max_length=40, blank=True)
+    reviewed_by = ForeignKey(
+        settings.AUTH_USER_MODEL, SET_NULL, null=True, blank=True,
+        related_name='homework_reviews',
+    )
+    reviewed_at = DateTimeField(null=True, blank=True)
     error = TextField(blank=True)
     checked_at = DateTimeField(null=True, blank=True)
 
@@ -75,3 +100,22 @@ class Submission(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} → {self.assignment.title} [{self.status}]'
+
+
+class AssignmentFocusEvent(TimeStampedUUIDModel):
+    """O'quvchi vazifa sahifasidan chiqib-kirishi — vaqt kuzatuvi
+    (darslardagi FocusEvent uslubida, lekin Assignment uchun)."""
+
+    class Kind(TextChoices):
+        EXIT = 'exit', 'Sahifadan chiqdi'
+        RETURN = 'return', 'Sahifaga qaytdi'
+
+    assignment = ForeignKey('homework.Assignment', CASCADE, related_name='focus_events')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='homework_focus_events')
+    kind = CharField(max_length=8, choices=Kind.choices)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.student.username} · {self.kind} @ {self.assignment.title}'

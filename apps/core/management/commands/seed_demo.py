@@ -30,7 +30,7 @@ class Command(BaseCommand):
             first_name='Aziz', last_name='Aliyev', phone='+998900000002',
         )
         child = account_services.create_child(
-            parent=parent, username='demo_child', password=PASSWORD, first_name='Sardor',
+            creator=parent, username='demo_child', password=PASSWORD, first_name='Sardor',
         )
         course = lesson_services.create_course(
             teacher=teacher, title='Algebra · 7-sinf', subject='Matematika',

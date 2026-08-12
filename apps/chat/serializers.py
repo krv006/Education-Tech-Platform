@@ -7,11 +7,17 @@ from .models import ChatRoom, Message
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = UserSerializer(read_only=True)
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
-        fields = ['id', 'room', 'sender', 'text', 'created_at']
+        fields = ['id', 'room', 'sender', 'text', 'file_url', 'created_at']
         read_only_fields = ['room', 'sender']
+
+    def get_file_url(self, obj) -> str | None:
+        if not obj.file:
+            return None
+        return f'/api/v1/chat/files/{obj.id}/'
 
 
 class ChatRoomSerializer(serializers.ModelSerializer):
@@ -21,13 +27,26 @@ class ChatRoomSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread = serializers.SerializerMethodField()
     other_user = serializers.SerializerMethodField()
+    live_lesson = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatRoom
         fields = [
-            'id', 'kind', 'course', 'direct_status',
-            'title', 'last_message', 'unread', 'other_user', 'updated_at',
+            'id', 'kind', 'course', 'direct_status', 'image',
+            'title', 'last_message', 'unread', 'other_user', 'live_lesson', 'updated_at',
         ]
+        read_only_fields = ['image']
+
+    def get_live_lesson(self, obj):
+        """Kurs guruhida hozir jonli (LIVE) dars bo'lsa — "qo'shilish" tugmasi
+        uchun kerakli maydonlar (Telegram guruh video chat chizig'i uslubi)."""
+        if obj.kind != ChatRoom.Kind.COURSE or not obj.course_id:
+            return None
+        from apps.lessons.models import Lesson
+        lesson = obj.course.lessons.filter(status=Lesson.Status.LIVE).first()
+        if lesson is None:
+            return None
+        return {'id': str(lesson.id), 'title': lesson.title, 'room_name': lesson.room_name}
 
     def get_title(self, obj) -> str:
         return obj.title_for(self.context['request'].user)
@@ -45,11 +64,14 @@ class ChatRoomSerializer(serializers.ModelSerializer):
         msg = cached[0] if cached else obj.messages.order_by('-created_at').first()
         if not msg:
             return None
-        return {
+        data = {
             'text': msg.text[:80],
             'sender': msg.sender.first_name or msg.sender.username,
             'created_at': msg.created_at,
         }
+        if msg.file:
+            data['file_url'] = f'/api/v1/chat/files/{msg.id}/'
+        return data
 
     def get_unread(self, obj) -> int:
         user = self.context['request'].user

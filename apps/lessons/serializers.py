@@ -1,26 +1,36 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
 
 from . import selectors
-from .models import Attendance, Course, Enrollment, Lesson
+from .models import Attendance, Course, Enrollment, Lesson, LessonRating
 
 
 class CourseSerializer(serializers.ModelSerializer):
     teacher = UserSerializer(read_only=True)
     student_count = serializers.SerializerMethodField()
     my_status = serializers.SerializerMethodField()
+    is_language_subject = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
         fields = [
             'id', 'teacher', 'title', 'subject', 'description', 'is_active',
-            'student_count', 'my_status', 'created_at',
+            'student_count', 'my_status', 'is_language_subject', 'created_at',
         ]
         read_only_fields = ['is_active']
 
     def get_student_count(self, obj) -> int:
         return obj.enrollments.filter(status=Enrollment.Status.APPROVED).count()
+
+    def get_is_language_subject(self, obj) -> bool:
+        """Til fani (ingliz/rus/turk...) bo'lsa true — frontend vazifa
+        yaratishda "tekshiruv turi" (writing/reading/listening/speaking)
+        maydonini faqat shu holatda ko'rsatishi kerak."""
+        from apps.homework.ai import detect_profile
+        _, _, language_key = detect_profile(obj.subject)
+        return bool(language_key)
 
     def get_my_status(self, obj) -> str | None:
         """So'rov yuborgan foydalanuvchining shu kursdagi yozilish holati (katalog uchun)."""
@@ -33,14 +43,70 @@ class CourseSerializer(serializers.ModelSerializer):
 
 class LessonSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
+    avg_rating = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Lesson
         fields = [
             'id', 'course', 'course_title', 'title', 'starts_at',
             'duration_min', 'status', 'room_name', 'created_at',
+            'avg_rating', 'rating_count',
         ]
         read_only_fields = ['room_name', 'status']
+
+    def validate_starts_at(self, value):
+        # Faqat YANGI dars yaratishda tekshiramiz — mavjud (o'tgan) darsni
+        # boshqa maydon bo'yicha tahrirlash bloklanib qolmasin.
+        if self.instance is None and value < timezone.now():
+            raise serializers.ValidationError("Dars boshlanish vaqti o'tgan bo'lishi mumkin emas.")
+        return value
+
+    def get_avg_rating(self, obj) -> float | None:
+        from django.db.models import Avg
+        result = obj.ratings.aggregate(avg=Avg('stars'))['avg']
+        return round(result, 1) if result else None
+
+    def get_rating_count(self, obj) -> int:
+        return obj.ratings.count()
+
+
+class LessonRatingSerializer(serializers.ModelSerializer):
+    student = UserSerializer(read_only=True)
+
+    class Meta:
+        model = LessonRating
+        fields = ['id', 'lesson', 'student', 'stars', 'description', 'created_at']
+        read_only_fields = ['lesson']
+
+
+class RateLessonSerializer(serializers.Serializer):
+    stars = serializers.IntegerField(min_value=1, max_value=5)
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ScheduleLessonsSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    days = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=6),
+        min_length=1, max_length=7,
+    )
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
+    weeks = serializers.IntegerField(min_value=1, max_value=52)
+    start_date = serializers.DateField()
+    note = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate(self, data):
+        if data['end_time'] <= data['start_time']:
+            raise serializers.ValidationError(
+                {'end_time': "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak."},
+            )
+        if data['start_date'] < timezone.now().date():
+            raise serializers.ValidationError(
+                {'start_date': "Boshlanish sanasi o'tgan bo'lishi mumkin emas."},
+            )
+        return data
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):

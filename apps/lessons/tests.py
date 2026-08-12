@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
@@ -23,9 +26,10 @@ class CourseLessonFlowTests(APITestCase):
         self.course_id = self.client.post(
             '/api/v1/courses/', {'title': 'Algebra', 'subject': 'Matematika'}
         ).json()['id']
+        starts_at = (timezone.now() + timedelta(days=1)).isoformat()
         self.lesson_id = self.client.post('/api/v1/lessons/', {
             'course': self.course_id, 'title': 'Dars 1',
-            'starts_at': '2026-08-01T14:00:00+05:00', 'duration_min': 45,
+            'starts_at': starts_at, 'duration_min': 45,
         }).json()['id']
 
     def auth(self, token):
@@ -138,6 +142,146 @@ class CourseLessonFlowTests(APITestCase):
         from .models import Course
         self.assertFalse(Course.objects.filter(pk=self.course_id).exists())
         self.assertTrue(Course.all_objects.filter(pk=self.course_id).exists())
+
+    def test_cannot_create_lesson_in_past(self):
+        self.auth(self.teacher_token)
+        past = (timezone.now() - timedelta(days=1)).isoformat()
+        resp = self.client.post('/api/v1/lessons/', {
+            'course': self.course_id, 'title': "O'tgan dars",
+            'starts_at': past, 'duration_min': 45,
+        })
+        self.assertEqual(resp.status_code, 400)
+
+    def test_can_edit_other_fields_of_existing_lesson(self):
+        """starts_at o'zgarmasa (allaqachon kelajakda bo'lsa ham), boshqa
+        maydonni tahrirlash bloklanmasligini tekshiradi."""
+        self.auth(self.teacher_token)
+        resp = self.client.patch(f'/api/v1/lessons/{self.lesson_id}/', {'title': 'Yangi nom'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['title'], 'Yangi nom')
+
+    def test_schedule_recurring_rejects_past_start_date(self):
+        self.auth(self.teacher_token)
+        past_date = (timezone.now().date() - timedelta(days=7)).isoformat()
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': "O'tgan hafta",
+            'days': [0],
+            'start_time': '10:00',
+            'end_time': '11:00',
+            'weeks': 1,
+            'start_date': past_date,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_schedule_recurring_creates_lessons(self):
+        self.auth(self.teacher_token)
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Haftalik dars',
+            'days': [0, 2, 4],
+            'start_time': '10:00',
+            'end_time': '11:00',
+            'weeks': 2,
+            'start_date': '2026-09-07',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['count'], 6)
+
+    def test_schedule_recurring_detects_overlap(self):
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Dars A',
+            'days': [0],
+            'start_time': '14:00',
+            'end_time': '15:00',
+            'weeks': 1,
+            'start_date': '2026-09-07',
+        }, format='json')
+        resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
+            'title': 'Dars B',
+            'days': [0],
+            'start_time': '14:30',
+            'end_time': '15:30',
+            'weeks': 1,
+            'start_date': '2026-09-07',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rate_finished_lesson(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+
+        self.auth(self.child_token)
+        resp = self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5, 'description': 'Zo\'r!'})
+        self.assertEqual(resp.status_code, 201)
+
+        resp = self.client.get(f'/api/v1/lessons/{self.lesson_id}/')
+        self.assertEqual(resp.json()['avg_rating'], 5.0)
+        self.assertEqual(resp.json()['rating_count'], 1)
+
+    def test_cannot_rate_unfinished_lesson(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+        self.auth(self.child_token)
+        resp = self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 4})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_delete_course_wipes_group_data_keeps_history(self):
+        from apps.board.models import BoardSheet
+        from apps.chat.models import ChatRoom, Message
+
+        from .models import Course, LessonRating
+
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+
+        self.auth(self.child_token)
+        self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
+
+        BoardSheet.objects.create(
+            lesson_id=self.lesson_id, index=0,
+            strokes=[{'id': 'x', 'points': [[0, 0], [1, 1]], 'color': '#000', 'width': 2}],
+        )
+        room = ChatRoom.objects.get(kind=ChatRoom.Kind.COURSE, course_id=self.course_id)
+        teacher = User.objects.get(username='t1')
+        Message.objects.create(room=room, sender=teacher, text='Salom guruh!')
+
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+
+        self.auth(self.child_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5})
+
+        self.assertTrue(Attendance.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertTrue(LessonRating.objects.filter(lesson_id=self.lesson_id).exists())
+
+        self.auth(self.teacher_token)
+        resp = self.client.delete(f'/api/v1/courses/{self.course_id}/')
+        self.assertEqual(resp.status_code, 204)
+
+        # guruh ma'lumotlari butunlay o'chadi
+        self.assertFalse(ChatRoom.objects.filter(course_id=self.course_id).exists())
+        self.assertFalse(BoardSheet.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertFalse(self.client.get(f'/api/v1/courses/{self.course_id}/').json().get('id'))
+
+        # kurs/dars yashiriladi (soft-delete), lekin bazadan o'chmaydi
+        self.assertFalse(Course.objects.filter(pk=self.course_id).exists())
+        self.assertTrue(Course.all_objects.filter(pk=self.course_id).exists())
+
+        # Davomat va baho TARIXI saqlanib qoladi
+        self.assertTrue(Attendance.objects.filter(lesson_id=self.lesson_id).exists())
+        self.assertTrue(LessonRating.objects.filter(lesson_id=self.lesson_id).exists())
+
+    def test_other_teacher_cannot_delete_foreign_course(self):
+        register(self.client, 't2', 'teacher')
+        t2_token = login(self.client, 't2')
+        self.auth(t2_token)
+        resp = self.client.delete(f'/api/v1/courses/{self.course_id}/')
+        self.assertEqual(resp.status_code, 404)  # boshqa oquvchining kursi korinmaydi (queryset scoped)
 
 
 class FocusSummaryTests(APITestCase):

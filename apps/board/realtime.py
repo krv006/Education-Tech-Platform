@@ -36,3 +36,9 @@ def broadcast_erase(lesson_id, sheet_index: int, stroke_ids: list, by: str, reas
 
 def broadcast_sheet(lesson_id, index: int) -> None:
     _send(lesson_id, {'type': 'sheet', 'index': index})
+
+
+def broadcast_focus(lesson_id, student_id: str, name: str, kind: str) -> None:
+    """O'quvchi dars oynasidan chiqdi/qaytdi — o'qituvchiga darhol ko'rinishi
+    uchun (frontend faqat is_teacher=true bo'lganda ko'rsatadi)."""
+    _send(lesson_id, {'type': 'focus', 'student_id': student_id, 'name': name, 'kind': kind})

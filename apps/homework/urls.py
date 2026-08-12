@@ -10,4 +10,6 @@ urlpatterns = [
     path('submissions/<uuid:submission_id>/', views.SubmissionDetailView.as_view(), name='hw-submission'),
     path('submissions/<uuid:submission_id>/file/', views.SubmissionFileView.as_view(), name='hw-submission-file'),
     path('submissions/<uuid:submission_id>/recheck/', views.RecheckView.as_view(), name='hw-recheck'),
+    path('submissions/<uuid:submission_id>/review/', views.SubmissionReviewView.as_view(), name='hw-review'),
+    path('assignments/<uuid:assignment_id>/focus/', views.AssignmentFocusView.as_view(), name='hw-focus'),
 ]

@@ -195,3 +195,21 @@ class Attendance(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} @ {self.lesson.title}'
+
+
+class LessonRating(TimeStampedUUIDModel):
+    """O'quvchi tugagan darsga baho beradi — o'qituvchi/kurs sifatini kuzatish uchun."""
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='ratings')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='lesson_ratings')
+    stars = PositiveIntegerField()
+    description = TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_rating'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} · {self.stars}★'

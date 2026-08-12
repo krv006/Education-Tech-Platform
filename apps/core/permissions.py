@@ -35,10 +35,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'attendance.view',
         'chat.use',
         'homework.assign', 'homework.view',
+        'child.create',
     },
     STUDENT: {
         'course.view', 'course.enroll',
-        'lesson.view',
+        'lesson.view', 'lesson.rate',
         'room.token', 'room.leave',
         'link.respond',
         'attendance.view',

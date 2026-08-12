@@ -9,7 +9,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 
 from apps.core import audit
 
-from .models import Consent, ParentChildLink, User
+from .models import Consent, DeviceSession, ParentChildLink, User
 
 
 @transaction.atomic
@@ -24,16 +24,24 @@ def register_user(*, username: str, password: str, role: str, request=None, **ex
 
 
 @transaction.atomic
-def create_child(*, parent: User, username: str, password: str, request=None, **extra) -> User:
-    """Ota-ona bola hisobini yaratadi — bog'lanish darhol APPROVED (FRD: auth.child_create)."""
+def create_child(*, creator: User, username: str, password: str, request=None, **extra) -> User:
+    """O'quvchi hisobini yaratadi — ota-ona yoki o'qituvchi.
+
+    Ota-ona yaratsa — ParentChildLink darhol APPROVED (FRD: auth.child_create).
+    O'qituvchi yaratsa — bog'lanish yaratilmaydi (o'qituvchi ota-ona emas);
+    o'quvchiga invite_code beriladi, haqiqiy ota-ona keyin shu kod orqali
+    bog'lanishi mumkin. O'qituvchi bolani alohida enroll/ orqali kursiga
+    biriktiradi.
+    """
     child = User(username=username, role=User.Role.STUDENT, **extra)
     child.set_password(password)
     child.save()
-    ParentChildLink.objects.create(
-        parent=parent, student=child, status=ParentChildLink.Status.APPROVED,
-        responded_at=timezone.now(),
-    )
-    audit.record(action='child.create', actor=parent, target=child, request=request)
+    if creator.role == User.Role.PARENT:
+        ParentChildLink.objects.create(
+            parent=creator, student=child, status=ParentChildLink.Status.APPROVED,
+            responded_at=timezone.now(),
+        )
+    audit.record(action='child.create', actor=creator, target=child, request=request)
     return child
 
 
@@ -152,3 +160,92 @@ def login_history(*, viewer: User, student_id=None, limit: int = 50) -> list:
         'new_ip': (r.meta or {}).get('new_ip', False),
         'new_device': (r.meta or {}).get('new_device', False),
     } for r in rows]
+
+
+# ── Bitta akkaunt = bitta faol qurilma ──────────────────────────────────────
+
+def session_cache_key(user_id) -> str:
+    return f'device_session:{user_id}'
+
+
+def _client_ip(request):
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    return xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+
+
+def _device_label(user_agent: str) -> str:
+    ua = user_agent or ''
+    if 'Edg/' in ua:
+        browser = 'Edge'
+    elif 'OPR/' in ua:
+        browser = 'Opera'
+    elif 'Chrome/' in ua:
+        browser = 'Chrome'
+    elif 'Firefox/' in ua:
+        browser = 'Firefox'
+    elif 'Safari/' in ua:
+        browser = 'Safari'
+    else:
+        browser = "Noma'lum brauzer"
+
+    if 'Windows' in ua:
+        osname = 'Windows'
+    elif 'Android' in ua:
+        osname = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua:
+        osname = 'iOS'
+    elif 'Mac OS' in ua:
+        osname = 'macOS'
+    elif 'Linux' in ua:
+        osname = 'Linux'
+    else:
+        osname = "noma'lum qurilma"
+
+    return f'{browser} · {osname}'
+
+
+def _blacklist_jti(jti: str) -> None:
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+
+    token = OutstandingToken.objects.filter(jti=jti).first()
+    if token is not None:
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
+@transaction.atomic
+def enforce_single_session(*, user: User, tokens: dict, request, force: bool) -> dict | None:
+    """Bitta akkaunt = bitta faol qurilma.
+
+    Ziddiyat bo'lsa (boshqa qurilmada faol sessiya bor) va force=False —
+    hozirgina berilgan tokenlar bekor qilinadi (blacklist), conflict ma'lumoti
+    qaytariladi (LoginView shu asosda 409 beradi). force=True yoki ziddiyat
+    yo'q bo'lsa — eski qurilma chiqariladi (blacklist), yangi sessiya yozib
+    qo'yiladi va Redis keshiga darhol yoziladi (har so'rovda DB'ga bormaslik
+    uchun — apps.accounts.authentication shu keshni tekshiradi).
+    """
+    from django.core.cache import cache
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    refresh = RefreshToken(tokens['refresh'])
+    new_jti = refresh['session_jti']
+    user_agent = (request.META.get('HTTP_USER_AGENT') or '')[:300]
+    ip = _client_ip(request)
+    device_label = _device_label(user_agent)
+
+    existing = DeviceSession.objects.select_for_update().filter(user=user).first()
+    if existing is not None and existing.session_jti != new_jti and not force:
+        refresh.blacklist()
+        return {'device_label': existing.device_label or "noma'lum qurilma"}
+
+    if existing is not None and existing.session_jti != new_jti:
+        _blacklist_jti(existing.session_jti)
+
+    DeviceSession.objects.update_or_create(
+        user=user,
+        defaults={
+            'session_jti': new_jti, 'device_label': device_label,
+            'user_agent': user_agent, 'ip_address': ip,
+        },
+    )
+    cache.set(session_cache_key(user.id), new_jti, 60 * 60 * 24 * 7)
+    return None

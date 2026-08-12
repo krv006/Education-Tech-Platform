@@ -9,10 +9,11 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import ParentChildLink, User
-from apps.lessons.models import Course, Enrollment
+from apps.lessons.models import Course, Enrollment, Lesson
 
 from . import ai
 from .models import Submission
@@ -103,6 +104,48 @@ class HomeworkTests(TestCase):
         r = self.create_assignment(skill_key='talking')
         self.assertEqual(r.status_code, 400)
 
+    def test_assignment_linked_to_finished_lesson(self):
+        lesson = Lesson.objects.create(
+            course=self.course, title="O'tilgan dars", starts_at=timezone.now(),
+            duration_min=45, status='finished',
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data['lesson_id'], str(lesson.id))
+        self.assertEqual(r.data['lesson_title'], "O'tilgan dars")
+
+        # bitta darsga bir nechta vazifa berish mumkin
+        r2 = self.create_assignment(lesson_id=str(lesson.id), title='Ikkinchi vazifa')
+        self.assertEqual(r2.status_code, 201)
+
+    def test_unfinished_lesson_rejected(self):
+        lesson = Lesson.objects.create(
+            course=self.course, title='Kelayotgan dars', starts_at=timezone.now(),
+            duration_min=45,
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 400)
+
+    def test_foreign_course_lesson_rejected(self):
+        other_course = Course.objects.create(
+            teacher=self.other_teacher, title='Boshqa kurs', subject='Fizika',
+        )
+        lesson = Lesson.objects.create(
+            course=other_course, title='Boshqa dars', starts_at=timezone.now(),
+            duration_min=45, status='finished',
+        )
+        r = self.create_assignment(lesson_id=str(lesson.id))
+        self.assertEqual(r.status_code, 404)
+
+    def test_course_serializer_is_language_subject(self):
+        eng = Course.objects.create(
+            teacher=self.teacher, title='English A1', subject='Ingliz tili',
+        )
+        r = self.api(self.teacher).get('/api/v1/courses/')
+        by_id = {c['id']: c for c in r.data['results']}
+        self.assertTrue(by_id[str(eng.id)]['is_language_subject'])
+        self.assertFalse(by_id[str(self.course.id)]['is_language_subject'])
+
     # ── topshirish + AI ──
     @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
     def test_submit_runs_check_and_saves_result(self, mock_grade):
@@ -111,14 +154,18 @@ class HomeworkTests(TestCase):
             f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
         )
         self.assertEqual(r.status_code, 201)
-        self.assertEqual(r.data['status'], 'done')
-        self.assertEqual(r.data['overall_score'], 78)
-        self.assertEqual(r.data['grade'], 'Yaxshi')
+        # AI tekshirdi, lekin o'qituvchi hali tasdiqlamagan — o'quvchiga
+        # ball/baho hali ko'rsatilmaydi
+        self.assertEqual(r.data['status'], 'pending_review')
+        self.assertIsNone(r.data['overall_score'])
+        self.assertEqual(r.data['grade'], '')
         # AI'ga fan konteksti to'g'ri uzatilgan
         _, kwargs = mock_grade.call_args
         self.assertEqual(kwargs['subject_text'], 'Matematika')
-        # natija to'liq saqlangan
+        # natija bazada (AI taklifi sifatida) to'liq saqlangan
         sub = Submission.objects.get(pk=r.data['id'])
+        self.assertEqual(sub.ai_overall_score, 78)
+        self.assertEqual(sub.overall_score, 78)  # dastlab AI'nikidan nusxa
         self.assertEqual(sub.result['questions'][0]['score'], 100)
 
     @patch('apps.homework.services.ai.grade_file', side_effect=ai.HomeworkAIError('kvota tugadi'))
@@ -162,16 +209,137 @@ class HomeworkTests(TestCase):
             f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
         ).data['id']
 
-        # o'quvchi, o'qituvchi, ota-ona ko'radi
+        # o'quvchi, o'qituvchi, ota-ona ko'ra oladi (huquq bor)
         for user in (self.student, self.teacher, self.parent):
             r = self.api(user).get(f'/api/v1/homework/submissions/{sub_id}/')
             self.assertEqual(r.status_code, 200, user.username)
-            self.assertEqual(r.data['result']['overall_score'], 78)
 
         # begona o'quvchi va boshqa o'qituvchi ko'rmaydi
         for user in (self.stranger, self.other_teacher):
             r = self.api(user).get(f'/api/v1/homework/submissions/{sub_id}/')
             self.assertEqual(r.status_code, 403, user.username)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_pending_review_hidden_from_student_visible_to_teacher(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        # O'qituvchi tasdiqlamaguncha o'quvchi/ota-onaga natija ko'rsatilmaydi
+        for user in (self.student, self.parent):
+            r = self.api(user).get(f'/api/v1/homework/submissions/{sub_id}/')
+            self.assertEqual(r.data['status'], 'pending_review')
+            self.assertIsNone(r.data['overall_score'])
+            self.assertIsNone(r.data['result'])
+
+        # O'qituvchi AI'ning taklifini darhol ko'radi
+        r = self.api(self.teacher).get(f'/api/v1/homework/submissions/{sub_id}/')
+        self.assertEqual(r.data['overall_score'], 78)
+        self.assertEqual(r.data['ai_overall_score'], 78)
+        self.assertIn('focus', r.data)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_teacher_approves_ai_result_as_is(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        r = self.api(self.teacher).post(f'/api/v1/homework/submissions/{sub_id}/review/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['status'], 'done')
+        self.assertEqual(r.data['overall_score'], 78)
+        self.assertEqual(r.data['reviewed_by'], self.teacher.username)
+        self.assertIsNotNone(r.data['reviewed_at'])
+
+        # Endi o'quvchi ham tasdiqlangan natijani ko'radi
+        r = self.api(self.student).get(f'/api/v1/homework/submissions/{sub_id}/')
+        self.assertEqual(r.data['status'], 'done')
+        self.assertEqual(r.data['overall_score'], 78)
+        self.assertEqual(r.data['result']['overall_score'], 78)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_teacher_overrides_score_and_feedback(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        edited_result = {**FAKE_RESULT, 'summary': {
+            **FAKE_RESULT['summary'], 'strengths': ["O'qituvchining o'z izohi"],
+        }}
+        r = self.api(self.teacher).post(
+            f'/api/v1/homework/submissions/{sub_id}/review/',
+            {'overall_score': 90, 'grade': "A'lo", 'result': edited_result},
+            format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['overall_score'], 90)
+        self.assertEqual(r.data['grade'], "A'lo")
+        # AI'ning asl (o'zgarmas) natijasi audit sifatida saqlanib qoladi
+        self.assertEqual(r.data['ai_overall_score'], 78)
+
+        sub = Submission.objects.get(pk=sub_id)
+        self.assertEqual(sub.overall_score, 90)
+        self.assertEqual(sub.result['summary']['strengths'], ["O'qituvchining o'z izohi"])
+        self.assertEqual(sub.ai_result['summary']['strengths'], FAKE_RESULT['summary']['strengths'])
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_review_requires_own_teacher(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        r = self.api(self.student).post(f'/api/v1/homework/submissions/{sub_id}/review/')
+        self.assertEqual(r.status_code, 403)
+        r = self.api(self.other_teacher).post(f'/api/v1/homework/submissions/{sub_id}/review/')
+        self.assertEqual(r.status_code, 403)
+
+    @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
+    def test_cannot_review_twice(self, _):
+        a_id = self.create_assignment().data['id']
+        sub_id = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/submit/', {'file': pdf_upload()},
+        ).data['id']
+
+        self.api(self.teacher).post(f'/api/v1/homework/submissions/{sub_id}/review/')
+        r = self.api(self.teacher).post(f'/api/v1/homework/submissions/{sub_id}/review/')
+        self.assertEqual(r.status_code, 400)
+
+    # ── vazifa sahifasida vaqt kuzatuvi (focus) ──
+    def test_focus_tracking_exit_return(self):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/focus/', {'kind': 'exit'}, format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/focus/', {'kind': 'return'}, format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+
+        from .services import focus_summary
+        summary = focus_summary(assignment_id=a_id, student=self.student)
+        self.assertEqual(summary['exits'], 1)
+        self.assertEqual(len(summary['timeline']), 1)
+        self.assertIsNotNone(summary['timeline'][0]['returned_at'])
+        self.assertGreaterEqual(summary['away_seconds'], 0)
+
+    def test_focus_bad_kind_rejected(self):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.student).post(
+            f'/api/v1/homework/assignments/{a_id}/focus/', {'kind': 'blah'}, format='json',
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_focus_requires_enrollment(self):
+        a_id = self.create_assignment().data['id']
+        r = self.api(self.stranger).post(
+            f'/api/v1/homework/assignments/{a_id}/focus/', {'kind': 'exit'}, format='json',
+        )
+        self.assertEqual(r.status_code, 403)
 
     @patch('apps.homework.services.ai.grade_file', return_value=FAKE_RESULT)
     def test_assignment_detail_scopes_submissions(self, _):

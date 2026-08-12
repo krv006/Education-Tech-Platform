@@ -5,7 +5,7 @@ from .models import Assignment, Submission
 
 @admin.register(Assignment)
 class AssignmentAdmin(admin.ModelAdmin):
-    list_display = ('title', 'course', 'skill_key', 'due_at', 'created_at')
+    list_display = ('title', 'course', 'lesson', 'skill_key', 'due_at', 'created_at')
     search_fields = ('title', 'course__title')
 
 

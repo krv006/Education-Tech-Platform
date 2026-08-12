@@ -78,4 +78,8 @@ class PdfView(APIView):
 
     def get(self, request, lesson_id):
         path = services.pdf_file(user=request.user, lesson_id=lesson_id)
-        return FileResponse(open(path, 'rb'), content_type='application/pdf', filename='doska.pdf')
+        resp = FileResponse(open(path, 'rb'), content_type='application/pdf')
+        resp['Content-Disposition'] = 'inline; filename="doska.pdf"'
+        resp['Cache-Control'] = 'no-store'
+        resp['X-Content-Type-Options'] = 'nosniff'
+        return resp

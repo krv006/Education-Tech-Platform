@@ -1,7 +1,9 @@
 """Lessons service layer — kurs/dars/yozilish bo'yicha yozuvchi biznes-logika."""
+import uuid
+
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts import selectors as account_selectors
 from apps.accounts.models import User
@@ -27,6 +29,78 @@ def schedule_lesson(*, teacher: User, course: Course, request=None, **data) -> L
     lesson = Lesson.objects.create(course=course, **data)
     audit.record(action='lesson.schedule', actor=teacher, target=lesson, request=request)
     return lesson
+
+
+@transaction.atomic
+def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[int],
+                       start_time, end_time, weeks: int, start_date, note: str = '',
+                       request=None) -> list[Lesson]:
+    """Haftalik jadval asosida ko'plab darslarni bir yo'la yaratadi.
+
+    O'qituvchining BOSHQA kurslari bilan ham (masalan ingliz tili + matematika)
+    vaqt ustma-ust tushmasligini tekshiradi — course__teacher bo'yicha, faqat
+    joriy kurs emas.
+    """
+    from datetime import datetime, timedelta
+
+    if course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs egasi dars qo'sha oladi.")
+
+    duration_min = int(
+        (datetime.combine(start_date, end_time) - datetime.combine(start_date, start_time)).total_seconds() // 60,
+    )
+
+    now = timezone.now()
+    week_start = start_date - timedelta(days=start_date.weekday())
+    slots = []
+    for week in range(weeks):
+        for day in sorted(set(days)):
+            lesson_date = week_start + timedelta(weeks=week, days=day)
+            if lesson_date < start_date:
+                continue
+            slot = timezone.make_aware(datetime.combine(lesson_date, start_time))
+            if slot < now:  # bugungi kun uchun soat allaqachon o'tib ketgan bo'lishi mumkin
+                continue
+            slots.append(slot)
+
+    if not slots:
+        raise ValidationError("Berilgan parametrlar bo'yicha hech qanday dars yaratilmaydi.")
+
+    existing = list(Lesson.objects.filter(
+        course__teacher=teacher,
+        status__in=[Lesson.Status.SCHEDULED, Lesson.Status.LIVE],
+        starts_at__range=(slots[0] - timedelta(hours=24), slots[-1] + timedelta(minutes=duration_min)),
+    ).values('title', 'starts_at', 'duration_min'))
+
+    conflicts = []
+    for new_start in slots:
+        new_end = new_start + timedelta(minutes=duration_min)
+        for ex in existing:
+            ex_end = ex['starts_at'] + timedelta(minutes=ex['duration_min'])
+            if ex['starts_at'] < new_end and ex_end > new_start:
+                conflicts.append({
+                    'date': new_start.strftime('%Y-%m-%d'),
+                    'time': f"{new_start.strftime('%H:%M')}-{new_end.strftime('%H:%M')}",
+                    'existing': ex['title'],
+                })
+                break
+
+    if conflicts:
+        raise ValidationError({'conflicts': conflicts})
+
+    lessons = Lesson.objects.bulk_create([
+        Lesson(
+            course=course, title=title, starts_at=s, duration_min=duration_min,
+            room_name=f'lesson-{uuid.uuid4().hex[:12]}',
+        )
+        for s in slots
+    ])
+    audit.record(
+        action='lesson.schedule_recurring', actor=teacher, target=course,
+        meta={'count': len(lessons), 'weeks': weeks, 'days': days, 'note': note},
+        request=request,
+    )
+    return lessons
 
 
 def _get_course(course_id) -> Course:
@@ -132,6 +206,75 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
 
 
 @transaction.atomic
+def delete_course(*, teacher: User, course: Course, request=None) -> None:
+    """Guruhni (kursni) o'chiradi — barcha a'zolar chiqib ketadi, chat/doska/video
+    ma'lumotlari BUTUNLAY o'chadi (fayllar diskdan ham). Davomat va baholar tarix
+    sifatida saqlanadi — shu sabab Kurs/Dars o'zi faqat soft-delete qilinadi
+    (Attendance/LessonRating shularga CASCADE FK bilan bog'langan)."""
+    if course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs egasi guruhni o'chira oladi.")
+
+    lessons = list(course.lessons.all())
+    lesson_ids = [lesson.id for lesson in lessons]
+
+    # Jonli darslar bo'lsa — yozuvni/xonani to'xtatishga urinamiz (best-effort,
+    # LiveKit muammosi o'chirishni to'xtatmasin)
+    from apps.live import services as live_services
+    for lesson in lessons:
+        if lesson.status == Lesson.Status.LIVE:
+            try:
+                live_services.stop_recording(lesson=lesson)
+                live_services.end_room(lesson=lesson)
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger('apps').exception('course delete: live room stop failed')
+
+    # Video yozuvlar — fayl + baza yozuvi butunlay o'chadi
+    from .models import LessonRecording
+    for recording in LessonRecording.objects.filter(lesson_id__in=lesson_ids):
+        if recording.file_name:
+            path = _recording_path(recording)
+            if path.exists():
+                path.unlink()
+        recording.delete()
+
+    # Doska — chizmalar, chizish ruxsatlari, o'chirish jurnali + PDF fayllar
+    from pathlib import Path
+
+    from django.conf import settings as dj_settings
+
+    from apps.board.models import BoardErase, BoardGrant, BoardSheet
+    BoardSheet.objects.filter(lesson_id__in=lesson_ids).delete()
+    BoardGrant.objects.filter(lesson_id__in=lesson_ids).delete()
+    BoardErase.objects.filter(lesson_id__in=lesson_ids).delete()
+    boards_dir = Path(dj_settings.BASE_DIR) / 'private' / 'boards'
+    for lesson_id in lesson_ids:
+        pdf_path = boards_dir / f'{lesson_id}.pdf'
+        if pdf_path.exists():
+            pdf_path.unlink()
+
+    # Chat — guruh xonasi + barcha xabarlar (biriktirilgan fayllar diskdan ham) butunlay o'chadi
+    from apps.chat.models import ChatRoom
+    room = ChatRoom.objects.filter(kind=ChatRoom.Kind.COURSE, course=course).first()
+    if room is not None:
+        for msg in room.messages.exclude(file=''):
+            msg.file.delete(save=False)
+        room.delete()
+
+    # A'zolik — barcha userlar guruhdan chiqib ketadi
+    course.enrollments.all().delete()
+
+    # Kurs/darslar — SOFT delete (Attendance/LessonRating tarixi saqlanishi uchun)
+    course.lessons.update(is_deleted=True, deleted_at=timezone.now())
+    course.delete()
+
+    audit.record(
+        action='course.delete', actor=teacher, target=course,
+        meta={'lesson_count': len(lesson_ids)}, request=request,
+    )
+
+
+@transaction.atomic
 def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', request=None) -> Lesson:
     """Darsni yakunlash — davomatlar yopiladi, doska PDF chatga tushadi,
     video yozuv to'xtatilib O'QITUVCHI BERGAN NOM bilan guruh chatga e'lon qilinadi."""
@@ -140,6 +283,13 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
     lesson.status = Lesson.Status.FINISHED
     lesson.save(update_fields=['status'])
     lesson.attendances.filter(left_at__isnull=True).update(left_at=timezone.now())
+    # Guruh chatga "jonli dars tugadi" signali (Telegram uslubidagi chiziq yo'qoladi)
+    try:
+        from apps.chat import realtime as chat_realtime
+        chat_realtime.broadcast_lesson_ended(lesson)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('lesson_ended broadcast failed')
     # Doska lentasi -> PDF -> guruh chat (EduTech.docx). Xato yakunlashni to'xtatmaydi.
     try:
         from apps.board import services as board_services
