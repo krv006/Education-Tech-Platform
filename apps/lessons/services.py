@@ -283,6 +283,13 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
     lesson.status = Lesson.Status.FINISHED
     lesson.save(update_fields=['status'])
     lesson.attendances.filter(left_at__isnull=True).update(left_at=timezone.now())
+    # Guruh chatga "jonli dars tugadi" signali (Telegram uslubidagi chiziq yo'qoladi)
+    try:
+        from apps.chat import realtime as chat_realtime
+        chat_realtime.broadcast_lesson_ended(lesson)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('lesson_ended broadcast failed')
     # Doska lentasi -> PDF -> guruh chat (EduTech.docx). Xato yakunlashni to'xtatmaydi.
     try:
         from apps.board import services as board_services

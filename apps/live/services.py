@@ -61,6 +61,14 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     if is_teacher and lesson.status == Lesson.Status.SCHEDULED:
         lesson.status = Lesson.Status.LIVE
         lesson.save(update_fields=['status'])
+        # Guruh chatga "jonli dars boshlandi" signali (Telegram uslubidagi
+        # guruh video chat chizig'i). Xato bo'lsa ham darsga kirish to'xtamasin.
+        try:
+            from apps.chat import realtime as chat_realtime
+            chat_realtime.broadcast_lesson_live(lesson)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('lesson_live broadcast failed')
     if is_teacher and lesson.status == Lesson.Status.LIVE:
         # Video yozuv KAFOLATLANADI (EduTech.docx) — har kirishda: birinchi
         # kirishda boshlaydi, qayta kirsa/backend restart bo'lsa aktiv

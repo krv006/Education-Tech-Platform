@@ -12,6 +12,9 @@ Server -> client:
         REST orqali yuborilgan xabarlar ham shu kanaldan keladi
     {"type": "typing", "user_id": "...", "name": "..."} — kimdir yozmoqda
         (o'zingizni user_id bo'yicha filtrlab tashlang)
+    {"type": "lesson_live", "lesson": {"id", "title", "room_name"}} — kurs guruhida
+        jonli dars boshlandi (Telegram uslubidagi guruh video chat chizig'i uchun)
+    {"type": "lesson_ended", "lesson_id": "..."} — jonli dars tugadi
 """
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -70,6 +73,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({
             'type': 'typing', 'user_id': event['user_id'], 'name': event['name'],
         })
+
+    async def chat_lesson_live(self, event):
+        await self.send_json({'type': 'lesson_live', 'lesson': event['lesson']})
+
+    async def chat_lesson_ended(self, event):
+        await self.send_json({'type': 'lesson_ended', 'lesson_id': event['lesson_id']})
 
     # ── sync DB yordamchilari ──
     @database_sync_to_async

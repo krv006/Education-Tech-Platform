@@ -22,7 +22,7 @@ class ChatRoomViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return selectors.rooms_for(user).prefetch_related(
+        return selectors.rooms_for(user).select_related('course').prefetch_related(
             Prefetch(
                 'messages',
                 queryset=Message.objects.select_related('sender').order_by('-created_at')[:1],

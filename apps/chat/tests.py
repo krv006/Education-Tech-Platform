@@ -112,6 +112,25 @@ class ChatFlowTests(TestCase):
         )
         self.assertEqual(r.status_code, 403)
 
+    def test_live_lesson_shown_in_room_list(self):
+        from django.utils import timezone
+
+        from apps.lessons.models import Lesson
+
+        lesson = Lesson.objects.create(
+            course=self.course, title='Live dars', starts_at=timezone.now(), duration_min=45,
+        )
+        r = self.api(self.student).get('/api/v1/chat/rooms/')
+        self.assertIsNone(r.data['results'][0]['live_lesson'])
+
+        self.api(self.teacher).post('/api/v1/live/token/', {'lesson_id': lesson.id})
+        r = self.api(self.student).get('/api/v1/chat/rooms/')
+        self.assertEqual(r.data['results'][0]['live_lesson']['id'], str(lesson.id))
+
+        self.api(self.teacher).post(f'/api/v1/lessons/{lesson.id}/finish/')
+        r = self.api(self.student).get('/api/v1/chat/rooms/')
+        self.assertIsNone(r.data['results'][0]['live_lesson'])
+
 
 class ChatWebSocketTests(TransactionTestCase):
     """WebSocket oqimi: JWT ulanish, ruxsat, xabar broadcast, typing.
@@ -190,4 +209,32 @@ class ChatWebSocketTests(TransactionTestCase):
         comm = WebsocketCommunicator(application, f'/ws/chat/{self.room.id}/')
         connected, _ = await comm.connect()
         self.assertFalse(connected)
+        await comm.disconnect()
+
+    async def test_lesson_live_and_ended_broadcast(self):
+        from django.utils import timezone
+
+        from apps.lessons import services as lesson_services
+        from apps.lessons.models import Lesson
+        from apps.live import services as live_services
+
+        lesson = await database_sync_to_async(Lesson.objects.create)(
+            course=self.course, title='WS jonli dars', starts_at=timezone.now(), duration_min=45,
+        )
+        comm, connected, _ = await self._connect(self.student)
+        self.assertTrue(connected)
+
+        await database_sync_to_async(live_services.issue_room_token)(
+            user=self.teacher, lesson_id=lesson.id,
+        )
+        event = await comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'lesson_live')
+        self.assertEqual(event['lesson']['id'], str(lesson.id))
+
+        await database_sync_to_async(lesson_services.finish_lesson)(
+            teacher=self.teacher, lesson=lesson,
+        )
+        event = await comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'lesson_ended')
+        self.assertEqual(event['lesson_id'], str(lesson.id))
         await comm.disconnect()

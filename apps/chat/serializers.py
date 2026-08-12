@@ -27,14 +27,26 @@ class ChatRoomSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread = serializers.SerializerMethodField()
     other_user = serializers.SerializerMethodField()
+    live_lesson = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatRoom
         fields = [
             'id', 'kind', 'course', 'direct_status', 'image',
-            'title', 'last_message', 'unread', 'other_user', 'updated_at',
+            'title', 'last_message', 'unread', 'other_user', 'live_lesson', 'updated_at',
         ]
         read_only_fields = ['image']
+
+    def get_live_lesson(self, obj):
+        """Kurs guruhida hozir jonli (LIVE) dars bo'lsa — "qo'shilish" tugmasi
+        uchun kerakli maydonlar (Telegram guruh video chat chizig'i uslubi)."""
+        if obj.kind != ChatRoom.Kind.COURSE or not obj.course_id:
+            return None
+        from apps.lessons.models import Lesson
+        lesson = obj.course.lessons.filter(status=Lesson.Status.LIVE).first()
+        if lesson is None:
+            return None
+        return {'id': str(lesson.id), 'title': lesson.title, 'room_name': lesson.room_name}
 
     def get_title(self, obj) -> str:
         return obj.title_for(self.context['request'].user)
