@@ -11,7 +11,10 @@ psycopg[binary]>=3.3
 livekit-api>=1.2
 gunicorn>=23.0
 whitenoise>=6.8
-redis>=5.0
+# channels_redis 4.x redis-py 8.x bilan mos emas — blocking (BRPOP) o'qishda
+# soxta TimeoutError beradi (WebSocket consumer'lar tinimsiz yiqiladi).
+# 5.x qatorida qotirilgan — sinovdan o'tgan, barqaror kombinatsiya.
+redis>=5.0,<6.0
 reportlab>=4.2
 sympy>=1.13
 matplotlib>=3.8
