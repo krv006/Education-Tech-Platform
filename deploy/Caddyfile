@@ -44,3 +44,21 @@ test-admin-api.navigocrm.com {
 eslat.thesofmebel.uz {
 	reverse_proxy eslatbot_adminka:8000
 }
+
+# --- Smart Project (smart.thesofmebel.uz) ---
+# Docker'siz loyiha (systemd + gunicorn, unix socket orqali). Ilgari host
+# nginx to'g'ridan-to'g'ri 80/443 portlarni ushlagan, lekin bu Caddy
+# konteyneri o'sha portlarni egallagach (edu_platform joylashtirilganda)
+# host nginx o'chirilgan va marshrut unutilgan edi (502 sababi shu).
+# Statik fayllar (STATIC_ROOT) ham shu yerda beriladi — loyihada whitenoise
+# yo'q, ilgari buni host nginx bajargan.
+smart.thesofmebel.uz {
+	encode zstd gzip
+
+	handle_path /static/* {
+		root * /srv/smart_static
+		file_server
+	}
+
+	reverse_proxy unix//run/smart_project/smart_project.sock
+}

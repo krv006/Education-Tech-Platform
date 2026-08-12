@@ -44,7 +44,6 @@ services:
   egress:
     image: livekit/egress:latest
     restart: unless-stopped
-    user: "0"
     environment:
       EGRESS_CONFIG_BODY: |
         api_key: ${LIVEKIT_API_KEY:?}
@@ -107,6 +106,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - media:/srv/media:ro
+      # Smart Project (systemd gunicorn) — unix socket + statik fayllar
+      - /var/www/smart_project/run:/run/smart_project
+      - /var/www/smart_project/staticfiles:/srv/smart_static:ro
     networks:
       - default
       - navigo   # Navigo CRM nginx'iga proxy uchun (Caddyfile'dagi navigocrm bloki)
