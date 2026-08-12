@@ -59,6 +59,22 @@ class BoardTests(TestCase):
         r = self.api(self.student).post(self.url('stroke/'), {'sheet': 0, 'stroke': STROKE}, format='json')
         self.assertEqual(r.status_code, 201)
 
+    def test_away_students_shown_only_to_teacher(self):
+        from apps.live import services as live_services
+
+        live_services.record_focus(user=self.student, lesson_id=self.lesson.id, kind='exit')
+
+        r = self.api(self.teacher).get(self.url())
+        self.assertEqual(len(r.data['away_students']), 1)
+        self.assertEqual(r.data['away_students'][0]['student_id'], str(self.student.id))
+
+        r = self.api(self.student).get(self.url())
+        self.assertNotIn('away_students', r.data)
+
+        live_services.record_focus(user=self.student, lesson_id=self.lesson.id, kind='return')
+        r = self.api(self.teacher).get(self.url())
+        self.assertEqual(r.data['away_students'], [])
+
     def test_erase_requires_reason(self):
         r = self.api(self.teacher).post(self.url('stroke/'), {'sheet': 0, 'stroke': STROKE}, format='json')
         sid = r.data['id']
@@ -298,3 +314,27 @@ class BoardWebSocketTests(TransactionTestCase):
         connected, _ = await comm.connect()
         self.assertFalse(connected)
         await comm.disconnect()
+
+    async def test_focus_exit_broadcast_to_teacher(self):
+        from channels.db import database_sync_to_async
+
+        from apps.live import services as live_services
+
+        teacher_comm = self.ws(self.teacher)
+        await teacher_comm.connect()
+
+        await database_sync_to_async(live_services.record_focus)(
+            user=self.student, lesson_id=self.lesson.id, kind='exit',
+        )
+        event = await teacher_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'focus')
+        self.assertEqual(event['kind'], 'exit')
+        self.assertEqual(event['student_id'], str(self.student.id))
+
+        await database_sync_to_async(live_services.record_focus)(
+            user=self.student, lesson_id=self.lesson.id, kind='return',
+        )
+        event = await teacher_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'focus')
+        self.assertEqual(event['kind'], 'return')
+        await teacher_comm.disconnect()

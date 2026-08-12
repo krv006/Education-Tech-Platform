@@ -58,10 +58,11 @@ def get_board(*, user: User, lesson_id) -> dict:
     sheets = list(lesson.board_sheets.all())
     if not sheets:
         sheets = [BoardSheet.objects.create(lesson=lesson, index=0)]
-    return {
+    is_teacher = _is_teacher(user, lesson)
+    result = {
         'sheets': [{'index': s.index, 'strokes': s.strokes} for s in sheets],
         'can_draw': can_draw(user, lesson),
-        'is_teacher': _is_teacher(user, lesson),
+        'is_teacher': is_teacher,
         'size': [SHEET_W, SHEET_H],
         'subject': lesson.course.subject,
         # Frontend uchun YAGONA manba: matematik vosita (MathLive math-field,
@@ -69,6 +70,12 @@ def get_board(*, user: User, lesson_id) -> dict:
         # regex'ini frontendda takrorlash SHART EMAS
         'math_enabled': is_math_lesson(lesson),
     }
+    if is_teacher:
+        # Diqqatsiz o'quvchilar (oynadan chiqib, hali qaytmagan) — faqat
+        # o'qituvchiga, WebSocket ulanishidan oldingi holatni ham qamrab oladi
+        from apps.live.services import away_students
+        result['away_students'] = away_students(lesson)
+    return result
 
 
 def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:

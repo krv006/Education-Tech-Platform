@@ -156,6 +156,19 @@ def record_focus(*, user: User, lesson_id, kind: str) -> dict:
         raise NotFound('Dars topilmadi.')
     event = FocusEvent.objects.create(lesson=lesson, student=user, kind=kind)
 
+    # O'qituvchiga darhol ko'rinishi kerak (burchakda "diqqat qilmayapti"
+    # belgisi) — doska WebSocket kanali orqali (dars davomida hamma shunga
+    # ulangan, yangi ulanish ochish shart emas). Xato broadcast qilmasin.
+    try:
+        from apps.board import realtime as board_realtime
+        board_realtime.broadcast_focus(
+            lesson_id, student_id=str(user.id),
+            name=user.first_name or user.username, kind=kind,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('focus broadcast failed')
+
     if kind != FocusEvent.Kind.EXIT:
         return {'kind': kind, 'exit_count': None, 'threshold': None, 'parent_notified': False}
 
@@ -173,6 +186,26 @@ def record_focus(*, user: User, lesson_id, kind: str) -> dict:
         'kind': event.kind, 'exit_count': exit_count,
         'threshold': threshold, 'parent_notified': parent_notified,
     }
+
+
+def away_students(lesson: Lesson) -> list[dict]:
+    """Hozir darsdan "chiqib ketgan" (oynadan chiqib, hali qaytmagan)
+    o'quvchilar — o'qituvchi doskani (qayta) ochganda darhol ko'rishi uchun
+    (WebSocket ulanishidan oldingi holatni ham qamrab oladi)."""
+    events = (
+        FocusEvent.objects.filter(lesson=lesson)
+        .select_related('student')
+        .order_by('created_at')
+    )
+    last_kind = {}
+    names = {}
+    for e in events:
+        last_kind[e.student_id] = e.kind
+        names[e.student_id] = e.student.first_name or e.student.username
+    return [
+        {'student_id': str(sid), 'name': names[sid]}
+        for sid, kind in last_kind.items() if kind == FocusEvent.Kind.EXIT
+    ]
 
 
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────
