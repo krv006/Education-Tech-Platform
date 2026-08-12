@@ -104,3 +104,34 @@ class RecheckView(APIView):
 
     def post(self, request, submission_id):
         return Response(services.recheck(user=request.user, submission_id=submission_id))
+
+
+class SubmissionReviewView(APIView):
+    """O'qituvchi AI natijasini ko'rib chiqadi — ball/baho/feedbackni xohlasa
+    tahrirlab, tasdiqlaydi. Shundan keyingina o'quvchi natijani ko'radi."""
+
+    permission_classes = [RequirePerm('homework.assign')]
+
+    def post(self, request, submission_id):
+        data = services.review_submission(
+            teacher=request.user,
+            submission_id=submission_id,
+            overall_score=request.data.get('overall_score'),
+            grade=request.data.get('grade') or '',
+            result=request.data.get('result'),
+        )
+        return Response(data)
+
+
+class AssignmentFocusView(APIView):
+    """O'quvchi vazifa sahifasidan chiqib-kirishini belgilaydi (vaqt kuzatuvi)."""
+
+    permission_classes = [RequirePerm('homework.submit')]
+
+    def post(self, request, assignment_id):
+        data = services.record_focus(
+            student=request.user,
+            assignment_id=assignment_id,
+            kind=request.data.get('kind') or '',
+        )
+        return Response(data)

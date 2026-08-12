@@ -18,7 +18,7 @@ from apps.accounts.models import ParentChildLink, User
 from apps.lessons.models import Course, Enrollment, Lesson
 
 from . import ai
-from .models import Assignment, Submission
+from .models import Assignment, AssignmentFocusEvent, Submission
 
 # Vazifa fayli (o'qituvchi biriktiradi) — AI'ga bormaydi, faqat yuklab olinadi
 ATTACHMENT_EXTENSIONS = {'.pdf', '.doc', '.docx', '.png', '.jpg', '.jpeg', '.webp'}
@@ -119,8 +119,11 @@ def _assignment_dict(a: Assignment) -> dict:
     }
 
 
-def _submission_dict(s: Submission, include_result: bool = True) -> dict:
+def _submission_dict(s: Submission, include_result: bool = True, is_teacher: bool = False) -> dict:
     due = s.assignment.due_at
+    # O'qituvchi tasdiqlamaguncha (PENDING_REVIEW) AI'ning taklif qilgan
+    # ball/bahosi o'quvchi/ota-onaga ko'rsatilmaydi — faqat o'qituvchiga.
+    hide_result = s.status == Submission.Status.PENDING_REVIEW and not is_teacher
     data = {
         'id': str(s.id),
         'assignment_id': str(s.assignment_id),
@@ -128,15 +131,23 @@ def _submission_dict(s: Submission, include_result: bool = True) -> dict:
         'student_name': f'{s.student.first_name} {s.student.last_name}'.strip() or s.student.username,
         'file_name': s.original_name,
         'status': s.status,
-        'overall_score': s.overall_score,
-        'grade': s.grade,
+        'overall_score': None if hide_result else s.overall_score,
+        'grade': '' if hide_result else s.grade,
         'error': s.error,
         'is_late': bool(due and s.created_at and s.created_at > due),
         'created_at': s.created_at,
         'checked_at': s.checked_at,
     }
     if include_result:
-        data['result'] = s.result
+        data['result'] = None if hide_result else s.result
+    if is_teacher:
+        data['reviewed_at'] = s.reviewed_at
+        data['reviewed_by'] = s.reviewed_by.username if s.reviewed_by_id else None
+        data['ai_overall_score'] = s.ai_overall_score
+        data['ai_grade'] = s.ai_grade
+        if include_result:
+            data['ai_result'] = s.ai_result
+            data['focus'] = focus_summary(assignment_id=s.assignment_id, student=s.student)
     return data
 
 
@@ -252,7 +263,9 @@ def get_assignment(*, user: User, assignment_id) -> dict:
     data = _assignment_dict(a)
     if a.course.teacher_id == user.id:
         subs = list(a.submissions.select_related('student', 'assignment'))
-        data['submissions'] = [_submission_dict(s, include_result=False) for s in subs]
+        data['submissions'] = [
+            _submission_dict(s, include_result=False, is_teacher=True) for s in subs
+        ]
         # Statistika: nechta o'quvchidan nechtasi topshirdi, o'rtacha ball
         scores = [s.overall_score for s in subs if s.overall_score is not None]
         data['stats'] = {
@@ -308,7 +321,12 @@ def submit(*, student: User, assignment_id, upload) -> dict:
 
 
 def run_check(submission_id) -> None:
-    """AI tekshiruvni bajaradi va natijani saqlaydi (thread ichida chaqiriladi)."""
+    """AI tekshiruvni bajaradi va natijani saqlaydi (thread ichida chaqiriladi).
+
+    Natija PENDING_REVIEW holatida to'xtaydi — AI'nikini "yakuniy" deb hisoblab
+    o'quvchiga ko'rsatmaymiz, o'qituvchi ko'rib chiqib tasdiqlashi kerak
+    (`review_submission`). AI'ning asl natijasi `ai_*` maydonlarda saqlanadi.
+    """
     submission = Submission.objects.select_related('assignment__course').get(pk=submission_id)
     a = submission.assignment
     try:
@@ -319,12 +337,20 @@ def run_check(submission_id) -> None:
             extra_instructions=a.extra_instructions,
         )
         score = result.get('overall_score')
-        submission.result = result
-        submission.overall_score = float(score) if score is not None else None
+        overall_score = float(score) if score is not None else None
         # grade yorlig'ini har doim ball shkalasidan olamiz — model gohida
         # boshqacha yozishi mumkin
-        submission.grade = ai.grade_label(score) or str(result.get('grade') or '')
-        submission.status = Submission.Status.DONE
+        grade = ai.grade_label(score) or str(result.get('grade') or '')
+
+        submission.ai_result = result
+        submission.ai_overall_score = overall_score
+        submission.ai_grade = grade
+        # Yakuniy maydonlar dastlab AI'nikidan nusxa — o'qituvchi tasdiqlaguncha
+        # shu turadi, tasdiqlashda ustidan yozilishi mumkin.
+        submission.result = result
+        submission.overall_score = overall_score
+        submission.grade = grade
+        submission.status = Submission.Status.PENDING_REVIEW
         submission.error = ''
     except Exception as exc:  # AI/tarmoq xatosi — foydalanuvchiga ko'rsatiladi
         submission.status = Submission.Status.ERROR
@@ -349,14 +375,11 @@ def _dispatch_check(submission: Submission) -> None:
 
 def get_submission(*, user: User, submission_id) -> dict:
     s = _get_submission(submission_id)
-    allowed = (
-        s.student_id == user.id
-        or s.assignment.course.teacher_id == user.id
-        or _is_parent_of(user, s.student)
-    )
+    is_teacher = s.assignment.course.teacher_id == user.id
+    allowed = is_teacher or s.student_id == user.id or _is_parent_of(user, s.student)
     if not allowed:
         raise PermissionDenied("Bu topshiriqni ko'rish huquqingiz yo'q.")
-    return _submission_dict(s)
+    return _submission_dict(s, is_teacher=is_teacher)
 
 
 def submission_file(*, user: User, submission_id) -> tuple:
@@ -380,4 +403,89 @@ def recheck(*, user: User, submission_id) -> dict:
     s.save(update_fields=['status', 'error', 'updated_at'])
     _dispatch_check(s)
     s.refresh_from_db()
-    return _submission_dict(s)
+    return _submission_dict(s, is_teacher=True)
+
+
+# ── o'qituvchi ko'rib chiqishi/tasdiqlashi ──────────────────────────────────
+def review_submission(*, teacher: User, submission_id, overall_score=None,
+                      grade: str = '', result=None) -> dict:
+    """O'qituvchi AI natijasini ko'rib chiqadi — xohlasa ball/baho/feedbackni
+    o'zgartiradi, so'ng tasdiqlaydi. Shundan keyingina o'quvchi natijani ko'radi.
+    Faqat AI tekshirib bo'lgan (PENDING_REVIEW) topshiriqqa tegishli."""
+    s = _get_submission(submission_id)
+    if s.assignment.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi tasdiqlaydi.")
+    if s.status != Submission.Status.PENDING_REVIEW:
+        raise ValidationError(
+            "Faqat AI tekshirib bo'lgan (ko'rib chiqish kutilayotgan) topshiriqni tasdiqlash mumkin."
+        )
+    if overall_score is not None:
+        try:
+            s.overall_score = float(overall_score)
+        except (TypeError, ValueError):
+            raise ValidationError({'overall_score': "Ball raqam bo'lishi kerak."})
+    if grade:
+        s.grade = grade.strip()[:40]
+    if result is not None:
+        s.result = result
+    s.status = Submission.Status.DONE
+    s.reviewed_by = teacher
+    s.reviewed_at = timezone.now()
+    s.save()
+    return _submission_dict(s, is_teacher=True)
+
+
+# ── vazifa sahifasida vaqt kuzatuvi ─────────────────────────────────────────
+def record_focus(*, student: User, assignment_id, kind: str) -> dict:
+    a = _get_assignment(assignment_id)
+    if not _is_enrolled(student, a.course):
+        raise PermissionDenied("Bu kursga yozilmagansiz.")
+    if kind not in AssignmentFocusEvent.Kind.values:
+        raise ValidationError({'kind': 'exit yoki return.'})
+    AssignmentFocusEvent.objects.create(assignment=a, student=student, kind=kind)
+    return {'ok': True}
+
+
+def focus_summary(*, assignment_id, student: User) -> dict:
+    """Vazifa sahifasida chiqib-kirish tahlili — jami/eng uzun tashqarida
+    o'tgan vaqt va sahifada o'tgan taxminiy vaqt (lessons.focus_summary uslubida,
+    lekin dars davomati chegarasi yo'qligi sabab ochiq chiqish `hozir`gacha hisoblanadi)."""
+    events = list(
+        AssignmentFocusEvent.objects.filter(assignment_id=assignment_id, student=student)
+        .order_by('created_at').values_list('kind', 'created_at')
+    )
+    if not events:
+        return {
+            'exits': 0, 'away_seconds': 0, 'longest_seconds': 0,
+            'on_page_seconds': 0, 'total_seconds': 0, 'timeline': [],
+        }
+    timeline = []
+    total_away = 0.0
+    longest = 0.0
+    open_exit = None
+    for kind, at in events:
+        if kind == AssignmentFocusEvent.Kind.EXIT and open_exit is None:
+            open_exit = at
+        elif kind == AssignmentFocusEvent.Kind.RETURN and open_exit is not None:
+            seconds = max(0.0, (at - open_exit).total_seconds())
+            timeline.append({'left_at': open_exit, 'returned_at': at, 'seconds': round(seconds)})
+            total_away += seconds
+            longest = max(longest, seconds)
+            open_exit = None
+    now = timezone.now()
+    last_seen = events[-1][1]
+    if open_exit is not None:
+        seconds = max(0.0, (now - open_exit).total_seconds())
+        timeline.append({'left_at': open_exit, 'returned_at': None, 'seconds': round(seconds)})
+        total_away += seconds
+        longest = max(longest, seconds)
+        last_seen = now
+    total_seconds = max(0.0, (last_seen - events[0][1]).total_seconds())
+    return {
+        'exits': sum(1 for k, _ in events if k == AssignmentFocusEvent.Kind.EXIT),
+        'away_seconds': round(total_away),
+        'longest_seconds': round(longest),
+        'on_page_seconds': round(max(0.0, total_seconds - total_away)),
+        'total_seconds': round(total_seconds),
+        'timeline': timeline,
+    }
