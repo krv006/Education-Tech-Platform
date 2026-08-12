@@ -126,7 +126,7 @@ class ChildCreateView(APIView):
     def post(self, request):
         serializer = ChildCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        child = services.create_child(parent=request.user, request=request, **serializer.validated_data)
+        child = services.create_child(creator=request.user, request=request, **serializer.validated_data)
         return Response(ChildCreateSerializer(child).data, status=status.HTTP_201_CREATED)
 
 

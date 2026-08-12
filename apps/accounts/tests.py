@@ -126,6 +126,26 @@ class LinkFlowTests(APITestCase):
         })
         self.assertEqual(resp.status_code, 403)
 
+    def test_teacher_can_create_child_without_parent_link(self):
+        register(self.client, 'teacher_x', 'teacher')
+        teacher_token = login(self.client, 'teacher_x')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {teacher_token}')
+
+        resp = self.client.post('/api/v1/auth/children/', {
+            'username': 'child_by_teacher', 'password': PASSWORD, 'first_name': 'Nodira',
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(resp.json()['invite_code'].startswith('FK-'))
+
+        # o'qituvchi ota-ona emas — bog'lanish yaratilmagan
+        self.assertFalse(
+            ParentChildLink.objects.filter(student__username='child_by_teacher').exists()
+        )
+
+        # yaratilgan o'quvchi o'zi login qila oladi
+        student_token = login(self.client, 'child_by_teacher')
+        self.assertTrue(student_token)
+
 
 class LoginJournalTests(APITestCase):
     """Login jurnali: IP/qurilma o'zgarishi bayroqlari va tarix endpointi."""

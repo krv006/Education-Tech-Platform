@@ -24,16 +24,24 @@ def register_user(*, username: str, password: str, role: str, request=None, **ex
 
 
 @transaction.atomic
-def create_child(*, parent: User, username: str, password: str, request=None, **extra) -> User:
-    """Ota-ona bola hisobini yaratadi — bog'lanish darhol APPROVED (FRD: auth.child_create)."""
+def create_child(*, creator: User, username: str, password: str, request=None, **extra) -> User:
+    """O'quvchi hisobini yaratadi — ota-ona yoki o'qituvchi.
+
+    Ota-ona yaratsa — ParentChildLink darhol APPROVED (FRD: auth.child_create).
+    O'qituvchi yaratsa — bog'lanish yaratilmaydi (o'qituvchi ota-ona emas);
+    o'quvchiga invite_code beriladi, haqiqiy ota-ona keyin shu kod orqali
+    bog'lanishi mumkin. O'qituvchi bolani alohida enroll/ orqali kursiga
+    biriktiradi.
+    """
     child = User(username=username, role=User.Role.STUDENT, **extra)
     child.set_password(password)
     child.save()
-    ParentChildLink.objects.create(
-        parent=parent, student=child, status=ParentChildLink.Status.APPROVED,
-        responded_at=timezone.now(),
-    )
-    audit.record(action='child.create', actor=parent, target=child, request=request)
+    if creator.role == User.Role.PARENT:
+        ParentChildLink.objects.create(
+            parent=creator, student=child, status=ParentChildLink.Status.APPROVED,
+            responded_at=timezone.now(),
+        )
+    audit.record(action='child.create', actor=creator, target=child, request=request)
     return child
 
 
