@@ -69,3 +69,44 @@ class AllowShareView(APIView):
             request=request,
         )
         return Response({'ok': True})
+
+
+class InviteView(APIView):
+    """O'qituvchi: darsga taklif bildirishnomasi. `student_id` bo'lmasa — hammaga."""
+
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        count = services.invite_to_lesson(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'invited': count})
+
+
+class BanView(APIView):
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        services.ban_participant(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'ok': True})
+
+
+class UnbanView(APIView):
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        unbanned = services.unban_participant(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'unbanned': unbanned})

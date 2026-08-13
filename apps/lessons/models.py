@@ -197,6 +197,23 @@ class Attendance(TimeStampedUUIDModel):
         return f'{self.student.username} @ {self.lesson.title}'
 
 
+class LessonBan(TimeStampedUUIDModel):
+    """O'qituvchi darsdan chetlashtirgan o'quvchi — qayta room token ololmaydi
+    (apps.live.services.issue_room_token shu jadvalni tekshiradi)."""
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='bans')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='lesson_bans')
+    banned_by = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='+')
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_ban'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} [banned]'
+
+
 class LessonRating(TimeStampedUUIDModel):
     """O'quvchi tugagan darsga baho beradi — o'qituvchi/kurs sifatini kuzatish uchun."""
 

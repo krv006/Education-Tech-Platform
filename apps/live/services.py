@@ -12,7 +12,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from apps.accounts.models import User
 from apps.core import audit
 from apps.lessons import services as lesson_services
-from apps.lessons.models import AttentionCheck, Enrollment, FocusAlert, FocusEvent, Lesson
+from apps.lessons.models import AttentionCheck, Enrollment, FocusAlert, FocusEvent, Lesson, LessonBan
 
 ATTENTION_WINDOW_SEC = 15  # popup ekranda turadigan vaqt (EduTech.docx)
 ATTENTION_GRACE_SEC = 8    # tarmoq kechikishi uchun qo'shimcha imkon
@@ -35,6 +35,8 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     ).exists()
     if not (is_teacher or is_enrolled):
         raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+    if not is_teacher and LessonBan.objects.filter(lesson=lesson, student=user).exists():
+        raise PermissionDenied("Siz bu darsdan chetlashtirilgansiz.")
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):
         raise ValidationError('Dars tugagan yoki bekor qilingan.')
 
@@ -263,6 +265,107 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
         meta={'identity': identity}, request=request,
     )
     return True
+
+
+# ── Taklif va chetlashtirish (Zoom uslubidagi invite/ban) ──────────────────
+
+def _get_owned_lesson(*, teacher: User, lesson_id) -> Lesson:
+    try:
+        lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
+    except (Lesson.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Dars topilmadi.')
+    if lesson.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi shu amalni bajara oladi.")
+    return lesson
+
+
+def invite_to_lesson(*, teacher: User, lesson_id, student_id=None, request=None) -> int:
+    """O'quvchiga (yoki student_id berilmasa — kursga APPROVED yozilgan
+    HAMMAGA) "dars boshlandi, kiring" bildirishnomasini yuboradi.
+
+    Faqat ogohlantirish — o'quvchi xonaga baribir o'zi token so'rab kiradi
+    (room.token ruxsati bo'lsa allaqachon kira oladi); bu shunchaki uni
+    xabardor qiladi.
+    """
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+
+    qs = lesson.course.enrollments.filter(status=Enrollment.Status.APPROVED).select_related('student')
+    if student_id:
+        qs = qs.filter(student_id=student_id)
+        if not qs.exists():
+            raise NotFound("O'quvchi bu kursga yozilmagan.")
+    students = [e.student for e in qs]
+    if not students:
+        return 0
+
+    from apps.notifications.models import Notification
+    from apps.notifications.services import send_notification
+
+    description = f'«{lesson.title}» darsi boshlandi — hoziroq kiring.'
+    for student in students:
+        send_notification(
+            sender=teacher, description=description,
+            target_type=Notification.Target.USER, user_id=student.id, request=request,
+        )
+    audit.record(
+        action='lesson.invite', actor=teacher, target=lesson,
+        meta={'student_count': len(students)}, request=request,
+    )
+    return len(students)
+
+
+def ban_participant(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """O'quvchini darsdan chetlashtiradi: hozir xonada bo'lsa darhol chiqarib
+    yuboradi (LiveKit), va LessonBan yaratib qayta kirishini bloklaydi
+    (issue_room_token shu jadvalni tekshiradi). Talaba hozir ulanmagan
+    bo'lsa ham — ban baribir saqlanadi, keyingi token so'rovi rad etiladi.
+    """
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+
+    LessonBan.objects.get_or_create(lesson=lesson, student=student, defaults={'banned_by': teacher})
+
+    async def _remove():
+        from livekit.protocol.room import RoomParticipantIdentity
+
+        client = LiveKitAPI(
+            url=_livekit_http_url(),
+            api_key=settings.LIVEKIT_API_KEY,
+            api_secret=settings.LIVEKIT_API_SECRET,
+        )
+        try:
+            await client.room.remove_participant(RoomParticipantIdentity(
+                room=lesson.room_name, identity=f'user-{student.id}',
+            ))
+        finally:
+            await client.aclose()
+
+    try:
+        asyncio.run(_remove())
+    except Exception:  # noqa: BLE001 — talaba hozir xonada bo'lmasligi mumkin, ban baribir saqlandi
+        import logging
+        logging.getLogger('apps').info('ban_participant: xonadan chiqarib bo\'lmadi (ulanmagan bo\'lishi mumkin)')
+
+    audit.record(
+        action='room.ban', actor=teacher, target=lesson,
+        meta={'student_id': str(student.id)}, request=request,
+    )
+    return True
+
+
+def unban_participant(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """Chetlashtirishni bekor qiladi — o'quvchi qayta token so'rab kira oladi."""
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    deleted, _ = LessonBan.objects.filter(lesson=lesson, student_id=student_id).delete()
+    if deleted:
+        audit.record(
+            action='room.unban', actor=teacher, target=lesson,
+            meta={'student_id': str(student_id)}, request=request,
+        )
+    return bool(deleted)
 
 
 # ── Dars video yozuvi (LiveKit Egress) ─────────────────────────────────────

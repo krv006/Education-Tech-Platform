@@ -69,3 +69,25 @@ def broadcast_lesson_ended(lesson) -> None:
         'type': 'chat.lesson_ended',
         'lesson_id': str(lesson.id),
     })
+
+
+def broadcast_member_removed(course_id, student_id) -> None:
+    """O'quvchi kursdan (unenroll) chiqarilganda — guruh chatga signal.
+
+    Ruxsat (can_read/can_write) faqat YANGI so'rovda tekshiriladi; o'quvchining
+    ALLAQACHON ochiq WebSocket ulanishi buni o'zi bilmaydi. Shu event orqali
+    consumer o'zini "bu men emasmi?" deb tekshirib, agar o'zi bo'lsa — ulanishni
+    o'zi yopadi (apps.chat.consumers.ChatConsumer.chat_member_removed).
+    """
+    from channels.layers import get_channel_layer
+
+    layer = get_channel_layer()
+    if layer is None:
+        return
+    group = _course_room_group(course_id)
+    if group is None:
+        return
+    async_to_sync(layer.group_send)(group, {
+        'type': 'chat.member_removed',
+        'user_id': str(student_id),
+    })

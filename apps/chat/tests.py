@@ -238,3 +238,27 @@ class ChatWebSocketTests(TransactionTestCase):
         self.assertEqual(event['type'], 'lesson_ended')
         self.assertEqual(event['lesson_id'], str(lesson.id))
         await comm.disconnect()
+
+    async def test_unenroll_closes_removed_students_socket(self):
+        from apps.lessons import services as lesson_services
+
+        student_comm, connected, _ = await self._connect(self.student)
+        self.assertTrue(connected)
+        teacher_comm, _, _ = await self._connect(self.teacher)
+
+        await database_sync_to_async(lesson_services.unenroll)(
+            course_id=self.course.id, by_user=self.teacher, student_id=self.student.id,
+        )
+
+        event = await student_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['type'], 'removed')
+        closed = await student_comm.receive_output(timeout=3)
+        self.assertEqual(closed['type'], 'websocket.close')
+
+        # boshqalarga ta'sir qilmaydi — o'qituvchi ulanishda qolaveradi
+        await database_sync_to_async(services.send_message)(
+            user=self.teacher, room_id=self.room.id, text='Hali shu yerdaman',
+        )
+        event = await teacher_comm.receive_json_from(timeout=3)
+        self.assertEqual(event['message']['text'], 'Hali shu yerdaman')
+        await teacher_comm.disconnect()

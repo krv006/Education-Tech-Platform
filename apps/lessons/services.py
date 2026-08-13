@@ -202,6 +202,15 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
             action='course.unenroll', actor=by_user, target=course,
             meta={'student_id': str(student.id)}, request=request,
         )
+        # Guruh chatidagi ALLAQACHON ochiq WebSocket ulanishi bo'lsa — o'zini
+        # yopsin (ruxsat faqat yangi so'rovda tekshiriladi, ochiq soket buni
+        # bilmaydi). Xato bo'lsa ham unenroll o'zi muvaffaqiyatli qolaveradi.
+        try:
+            from apps.chat import realtime as chat_realtime
+            chat_realtime.broadcast_member_removed(course.id, student.id)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('member_removed broadcast failed')
     return bool(deleted)
 
 

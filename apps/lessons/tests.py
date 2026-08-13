@@ -695,3 +695,131 @@ class RecordingLifecycleTests(APITestCase):
         self.assertIn("video/audio bo'lmadi", _friendly_egress_error(
             Exception('Start signal not received')))
         self.assertIn('texnik xato', _friendly_egress_error(Exception('boom')))
+
+
+class InviteBanTests(APITestCase):
+    """Zoom uslubidagi dars moderatsiyasi: o'qituvchi taklif yuboradi va
+    o'quvchini chetlashtiradi (ban qilingan qayta token ololmaydi)."""
+
+    def setUp(self):
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('ib_t', User.Role.TEACHER)
+        self.student = mk('ib_s', User.Role.STUDENT)
+        self.other_student = mk('ib_s2', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='IB')
+        Enrollment.objects.create(course=self.course, student=self.student, status=Enrollment.Status.APPROVED)
+        Enrollment.objects.create(course=self.course, student=self.other_student, status=Enrollment.Status.APPROVED)
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='L', starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def test_invite_single_student_sends_notification(self):
+        resp = self.api(self.teacher).post('/api/v1/live/invite/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['invited'], 1)
+
+        inbox = self.api(self.student).get('/api/v1/notifications/').json()['results']
+        self.assertEqual(len(inbox), 1)
+        self.assertIn(self.lesson.title, inbox[0]['notification']['description'])
+        self.assertEqual(
+            len(self.api(self.other_student).get('/api/v1/notifications/').json()['results']), 0,
+        )
+
+    def test_invite_without_student_id_notifies_everyone_enrolled(self):
+        resp = self.api(self.teacher).post('/api/v1/live/invite/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.data['invited'], 2)
+        self.assertEqual(
+            len(self.api(self.student).get('/api/v1/notifications/').json()['results']), 1,
+        )
+        self.assertEqual(
+            len(self.api(self.other_student).get('/api/v1/notifications/').json()['results']), 1,
+        )
+
+    def test_non_owner_teacher_cannot_invite(self):
+        from apps.accounts.models import User
+
+        other_teacher = User(username='ib_t2', role=User.Role.TEACHER)
+        other_teacher.set_password('x')
+        other_teacher.save()
+        resp = self.api(other_teacher).post('/api/v1/live/invite/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_student_cannot_invite(self):
+        resp = self.api(self.student).post('/api/v1/live/invite/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_ban_blocks_future_token_requests(self):
+        # ban'dan oldin — o'quvchi kira oladi
+        resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+
+        ban_resp = self.api(self.teacher).post('/api/v1/live/ban/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(ban_resp.status_code, 200)
+
+        resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 403)
+
+        # boshqa o'quvchiga ta'sir qilmaydi
+        resp = self.api(self.other_student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_ban_does_not_block_teacher(self):
+        from .models import LessonBan
+
+        LessonBan.objects.create(lesson=self.lesson, student=self.teacher, banned_by=self.teacher)
+        resp = self.api(self.teacher).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unban_restores_access(self):
+        self.api(self.teacher).post('/api/v1/live/ban/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        unban_resp = self.api(self.teacher).post('/api/v1/live/unban/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(unban_resp.data['unbanned'], True)
+
+        resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_non_owner_teacher_cannot_ban(self):
+        from apps.accounts.models import User
+
+        other_teacher = User(username='ib_t3', role=User.Role.TEACHER)
+        other_teacher.set_password('x')
+        other_teacher.save()
+        resp = self.api(other_teacher).post('/api/v1/live/ban/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_ban_unknown_student_returns_404(self):
+        import uuid
+
+        resp = self.api(self.teacher).post('/api/v1/live/ban/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 404)

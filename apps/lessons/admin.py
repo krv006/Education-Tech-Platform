@@ -8,6 +8,7 @@ from .models import (
     FocusAlert,
     FocusEvent,
     Lesson,
+    LessonBan,
     LessonRating,
     LessonRecording,
 )
@@ -87,4 +88,12 @@ class FocusAlertAdmin(admin.ModelAdmin):
 
     list_display = ['student', 'lesson', 'exit_count', 'created_at']
     list_filter = ['created_at']
+    search_fields = ['student__username', 'lesson__title']
+
+
+@admin.register(LessonBan)
+class LessonBanAdmin(admin.ModelAdmin):
+    """O'qituvchi darsdan chetlashtirgan o'quvchilar."""
+
+    list_display = ['student', 'lesson', 'banned_by', 'created_at']
     search_fields = ['student__username', 'lesson__title']

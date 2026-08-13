@@ -80,6 +80,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def chat_lesson_ended(self, event):
         await self.send_json({'type': 'lesson_ended', 'lesson_id': event['lesson_id']})
 
+    async def chat_member_removed(self, event):
+        """Kursdan chiqarilgan o'quvchining o'zi bo'lsa — ulanishni yopadi
+        (boshqalarga bu event kelsa ham, o'zi bo'lmaganlar jim o'tkazib yuboradi)."""
+        if event['user_id'] != str(self.scope['user'].id):
+            return
+        await self.send_json({'type': 'removed'})
+        await self.close(code=4403)
+
     # ── sync DB yordamchilari ──
     @database_sync_to_async
     def _can_read(self, user, room_id) -> bool:
