@@ -75,6 +75,28 @@ class BoardTests(TestCase):
         r = self.api(self.teacher).get(self.url())
         self.assertEqual(r.data['away_students'], [])
 
+    def test_pending_mic_requests_shown_only_to_teacher_and_survives_reconnect(self):
+        """So'rov WebSocket ulanishidan MUSTAQIL saqlanishi kerak — o'qituvchi
+        so'rovdan keyin kirsa yoki sahifani yangilasa ham (qayta GET /board/
+        chaqirsa) joriy so'rovlar yo'qolib qolmasin."""
+        from apps.live import services as live_services
+
+        live_services.request_mic(user=self.student, lesson_id=self.lesson.id)
+
+        # "Sahifa yangilanishi" — yangi GET so'rovi, hech qanday WS ulanishi
+        # bo'lmasa ham (bu test WS ishlatmaydi) so'rov ko'rinishi kerak
+        r = self.api(self.teacher).get(self.url())
+        self.assertEqual(len(r.data['pending_mic_requests']), 1)
+        self.assertEqual(r.data['pending_mic_requests'][0]['student_id'], str(self.student.id))
+
+        r = self.api(self.student).get(self.url())
+        self.assertNotIn('pending_mic_requests', r.data)
+
+        # Qayta so'rasa — dublikat yaratilmaydi
+        live_services.request_mic(user=self.student, lesson_id=self.lesson.id)
+        r = self.api(self.teacher).get(self.url())
+        self.assertEqual(len(r.data['pending_mic_requests']), 1)
+
     def test_erase_requires_reason(self):
         r = self.api(self.teacher).post(self.url('stroke/'), {'sheet': 0, 'stroke': STROKE}, format='json')
         sid = r.data['id']

@@ -888,6 +888,41 @@ class MicPermissionTests(APITestCase):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_request_mic_persists_for_late_joining_teacher(self):
+        """So'rov faqat WebSocket'da emas, bazada ham qoladi — o'qituvchi
+        so'rovdan keyin kirsa ham (yangi WS ulanish emas, oddiy funksiya
+        chaqiruvi bilan tekshiramiz) ko'rinishi kerak."""
+        from apps.live.services import pending_mic_requests
+
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+        pending = pending_mic_requests(self.lesson)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]['student_id'], str(self.student.id))
+
+    def test_grant_mic_clears_pending_request(self):
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, ParticipantPermission, TrackSource
+
+        from apps.live.services import pending_mic_requests
+
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(len(pending_mic_requests(self.lesson)), 1)
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.get_participant = AsyncMock(return_value=ParticipantInfo(
+                permission=ParticipantPermission(can_publish_sources=[TrackSource.CAMERA]),
+            ))
+            mock_client.room.update_participant = AsyncMock()
+            mock_client.aclose = AsyncMock()
+
+            self.api(self.teacher).post('/api/v1/live/grant-mic/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+
+        self.assertEqual(pending_mic_requests(self.lesson), [])
+
     def test_grant_mic_requires_owner_teacher(self):
         from apps.accounts.models import User
 

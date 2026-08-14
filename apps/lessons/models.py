@@ -214,6 +214,28 @@ class LessonBan(TimeStampedUUIDModel):
         return f'{self.student.username} @ {self.lesson.title} [banned]'
 
 
+class MicRequest(TimeStampedUUIDModel):
+    """O'quvchi mikrofon so'ragan ("qo'l ko'tarish"), hali javob berilmagan.
+
+    WebSocket broadcast'dan tashqari bazada ham saqlanadi — shu sababli
+    o'qituvchi so'rovdan KEYIN kirsa yoki sahifani yangilasa ham, joriy
+    kutayotgan so'rovlar yo'qolib qolmaydi (apps.live.services.pending_mic_requests
+    orqali qayta tiklanadi, apps.board.services.get_board() javobiga qo'shiladi).
+    Ruxsat berilganda (yoki o'quvchi darsdan chiqib ketganda) o'chiriladi.
+    """
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='mic_requests')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='mic_requests')
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_mic_request'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} [mic requested]'
+
+
 class LessonRating(TimeStampedUUIDModel):
     """O'quvchi tugagan darsga baho beradi — o'qituvchi/kurs sifatini kuzatish uchun."""
 

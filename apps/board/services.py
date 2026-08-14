@@ -73,8 +73,11 @@ def get_board(*, user: User, lesson_id) -> dict:
     if is_teacher:
         # Diqqatsiz o'quvchilar (oynadan chiqib, hali qaytmagan) — faqat
         # o'qituvchiga, WebSocket ulanishidan oldingi holatni ham qamrab oladi
-        from apps.live.services import away_students
+        from apps.live.services import away_students, pending_mic_requests
         result['away_students'] = away_students(lesson)
+        # Javobsiz mikrofon so'rovlari — WebSocket'dan oldin/keyin kirsa ham
+        # (sahifa yangilansa ham) yo'qolib qolmasligi uchun
+        result['pending_mic_requests'] = pending_mic_requests(lesson)
     return result
 
 

@@ -212,8 +212,13 @@ def away_students(lesson: Lesson) -> list[dict]:
 
 
 def request_mic(*, user: User, lesson_id, request=None) -> None:
-    """O'quvchi mikrofon so'raydi ("qo'l ko'tarish") — o'qituvchiga doska
-    WebSocket kanali orqali darhol ko'rinadi (yangi ulanish shart emas)."""
+    """O'quvchi mikrofon so'raydi ("qo'l ko'tarish").
+
+    Bazaga ham yoziladi (MicRequest, idempotent — qayta so'rasa dublikat
+    yaratilmaydi), NA FAQAT WebSocket orqali yuboriladi — shu sabab
+    o'qituvchi so'rovdan keyin kirsa yoki sahifani yangilasa ham,
+    `pending_mic_requests()` orqali joriy holat qayta tiklanadi.
+    """
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
@@ -223,6 +228,9 @@ def request_mic(*, user: User, lesson_id, request=None) -> None:
     ).exists()
     if not is_enrolled:
         raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+
+    from apps.lessons.models import MicRequest
+    MicRequest.objects.get_or_create(lesson=lesson, student=user)
 
     try:
         from apps.board import realtime as board_realtime
@@ -235,6 +243,19 @@ def request_mic(*, user: User, lesson_id, request=None) -> None:
         logging.getLogger('apps').exception('mic_request broadcast failed')
 
     audit.record(action='room.mic_request', actor=user, target=lesson, request=request)
+
+
+def pending_mic_requests(lesson: Lesson) -> list[dict]:
+    """Hozir javob kutilayotgan mikrofon so'rovlari — o'qituvchi doskani
+    (qayta) ochganda darhol ko'rishi uchun (WebSocket ulanishidan oldingi
+    yoki undan keyingi holatni ham qamrab oladi)."""
+    from apps.lessons.models import MicRequest
+
+    requests = MicRequest.objects.filter(lesson=lesson).select_related('student')
+    return [
+        {'student_id': str(r.student_id), 'name': r.student.first_name or r.student.username}
+        for r in requests
+    ]
 
 
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────
@@ -337,6 +358,9 @@ def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
             await client.aclose()
 
     asyncio.run(_update())
+
+    from apps.lessons.models import MicRequest
+    MicRequest.objects.filter(lesson=lesson, student=student).delete()
 
     try:
         from apps.board import realtime as board_realtime
