@@ -193,103 +193,66 @@ class LoginJournalTests(APITestCase):
         self.assertEqual(r.status_code, 403)
 
 
-class DeviceSessionTests(APITestCase):
-    """Bitta akkaunt = bitta faol qurilma."""
+class MultiDeviceLoginTests(APITestCase):
+    """Login cheklovsiz — bitta akkaunt bir vaqtda istalgancha qurilmadan kiradi."""
 
     def setUp(self):
-        register(self.client, 'ds_t', 'teacher')
+        register(self.client, 'md_t', 'teacher')
 
-    def _login(self, ua, force=False):
-        data = {'username': 'ds_t', 'password': PASSWORD}
-        if force:
-            data['force'] = 'true'
-        return self.client.post('/api/v1/auth/login/', data, HTTP_USER_AGENT=ua)
-
-    def test_second_device_blocked_without_force(self):
-        first = self._login('Chrome/Windows')
-        self.assertEqual(first.status_code, 200)
-
-        second = self._login('Firefox/Mac')
-        self.assertEqual(second.status_code, 409)
-        self.assertEqual(second.json()['code'], 'device_conflict')
-        self.assertIn('Chrome', second.json()['device_label'])
-
-    def test_force_login_kicks_old_device_immediately(self):
-        first = self._login('Chrome/Windows')
-        old_access = first.json()['access']
-
-        # eski qurilma hozircha ishlaydi
-        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {old_access}')
-        self.assertEqual(me.status_code, 200)
-
-        second = self._login('Firefox/Mac', force=True)
-        self.assertEqual(second.status_code, 200)
-        new_access = second.json()['access']
-
-        # eski qurilma DARHOL chiqarib yuborilgan (60 daqiqa kutmasdan)
-        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {old_access}')
-        self.assertEqual(me.status_code, 401)
-
-        # yangi qurilma ishlayapti
-        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {new_access}')
-        self.assertEqual(me.status_code, 200)
-
-    def test_current_session_endpoint(self):
-        access = self._login('Chrome/Windows').json()['access']
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
-        resp = self.client.get('/api/v1/auth/sessions/')
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn('Chrome', resp.json()['device_label'])
-
-    def test_old_refresh_token_blacklisted_after_force_login(self):
-        first = self._login('Chrome/Windows')
-        old_refresh = first.json()['refresh']
-        self._login('Firefox/Mac', force=True)
-
-        resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': old_refresh})
-        self.assertEqual(resp.status_code, 401)
-
-    def test_logout_frees_device_for_conflict_free_relogin(self):
-        first = self._login('Chrome/Windows')
-        access = first.json()['access']
-
-        out = self.client.post(
-            '/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}',
+    def _login(self, ua):
+        return self.client.post(
+            '/api/v1/auth/login/',
+            {'username': 'md_t', 'password': PASSWORD},
+            HTTP_USER_AGENT=ua,
         )
-        self.assertEqual(out.status_code, 204)
 
-        # endi "joy" bo'sh — boshqa qurilmadan force'siz ham konfliktsiz kiradi
-        second = self._login('Firefox/Mac')
-        self.assertEqual(second.status_code, 200)
+    def test_multiple_devices_login_freely(self):
+        responses = [
+            self._login('Chrome/Windows'),
+            self._login('Firefox/Mac'),
+            self._login('Safari/iPhone'),
+        ]
+        for resp in responses:
+            self.assertEqual(resp.status_code, 200)
 
-    def test_logout_invalidates_current_access_token_immediately(self):
-        first = self._login('Chrome/Windows')
-        access = first.json()['access']
-
-        self.client.post('/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}')
-
-        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {access}')
-        self.assertEqual(me.status_code, 401)
+        # hamma qurilmalarning tokenlari bir vaqtda ishlaydi
+        for resp in responses:
+            me = self.client.get(
+                '/api/v1/auth/me/',
+                HTTP_AUTHORIZATION=f"Bearer {resp.json()['access']}",
+            )
+            self.assertEqual(me.status_code, 200)
 
     def test_logout_blacklists_given_refresh_token(self):
         first = self._login('Chrome/Windows')
         access, refresh = first.json()['access'], first.json()['refresh']
 
-        self.client.post(
+        out = self.client.post(
             '/api/v1/auth/logout/', {'refresh': refresh}, HTTP_AUTHORIZATION=f'Bearer {access}',
         )
+        self.assertEqual(out.status_code, 204)
 
         resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': refresh})
         self.assertEqual(resp.status_code, 401)
 
+    def test_logout_does_not_affect_other_devices(self):
+        first = self._login('Chrome/Windows')
+        second = self._login('Firefox/Mac')
+
+        self.client.post(
+            '/api/v1/auth/logout/',
+            {'refresh': second.json()['refresh']},
+            HTTP_AUTHORIZATION=f"Bearer {second.json()['access']}",
+        )
+
+        # birinchi qurilma ishlashda davom etadi
+        me = self.client.get(
+            '/api/v1/auth/me/', HTTP_AUTHORIZATION=f"Bearer {first.json()['access']}",
+        )
+        self.assertEqual(me.status_code, 200)
+        resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': first.json()['refresh']})
+        self.assertEqual(resp.status_code, 200)
+
     def test_logout_requires_auth(self):
         resp = self.client.post('/api/v1/auth/logout/', {})
-        self.assertEqual(resp.status_code, 401)
-
-    def test_current_session_null_after_logout(self):
-        access = self._login('Chrome/Windows').json()['access']
-        self.client.post('/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}')
-
-        # sessiya endpointi endi login talab qiladi (token o'zi ham yaroqsiz)
-        resp = self.client.get('/api/v1/auth/sessions/', HTTP_AUTHORIZATION=f'Bearer {access}')
         self.assertEqual(resp.status_code, 401)

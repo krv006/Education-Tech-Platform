@@ -1,6 +1,5 @@
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import Consent, ParentChildLink, User
 
@@ -10,18 +9,6 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'first_name', 'last_name', 'role', 'phone', 'invite_code', 'avatar']
         read_only_fields = ['role', 'invite_code']
-
-
-class DeviceAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Refresh (va undan nusxalanib access'ga ham o'tadigan) tokenga `session_jti`
-    claim'ini qo'shadi — bitta akkaunt = bitta faol qurilma tekshiruvi shu
-    claim orqali amalga oshadi (apps.accounts.authentication)."""
-
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        token['session_jti'] = token['jti']
-        return token
 
 
 class RegisterSerializer(serializers.ModelSerializer):

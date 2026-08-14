@@ -15,7 +15,6 @@ from . import selectors, services
 from .serializers import (
     ChildCreateSerializer,
     ConsentSerializer,
-    DeviceAwareTokenObtainPairSerializer,
     LinkRequestSerializer,
     LinkRespondSerializer,
     LinkSerializer,
@@ -37,7 +36,6 @@ class RegisterView(APIView):
 
 class LoginView(TokenObtainPairView):
     throttle_scope = 'auth'
-    serializer_class = DeviceAwareTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -46,31 +44,10 @@ class LoginView(TokenObtainPairView):
 
         from .models import User
 
-        user = User.objects.filter(username=request.data.get('username', '')).first()
-        if user is None:
-            return response
-
-        # Bitta akkaunt = bitta faol qurilma. Ziddiyat bo'lsa va force
-        # yuborilmagan bo'lsa — hozirgina berilgan tokenlar bekor qilinadi.
-        force = str(request.data.get('force', '')).lower() in ('true', '1')
-        conflict = services.enforce_single_session(
-            user=user, tokens=response.data, request=request, force=force,
-        )
-        if conflict is not None:
-            return Response(
-                {
-                    'code': 'device_conflict',
-                    'message': (
-                        f"Boshqa qurilmada faolsiz ({conflict['device_label']}). "
-                        "Chiqarib yuborib, shu yerdan kirishni xohlaysizmi?"
-                    ),
-                    'device_label': conflict['device_label'],
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
         # Muvaffaqiyatli login — IP/qurilma jurnaliga yoziladi (auth.login)
-        services.record_login(user=user, request=request)
+        user = User.objects.filter(username=request.data.get('username', '')).first()
+        if user is not None:
+            services.record_login(user=user, request=request)
         return response
 
 
@@ -89,32 +66,13 @@ class LoginHistoryView(APIView):
         ))
 
 
-class CurrentSessionView(APIView):
-    """Hozir qaysi qurilma faol (bitta akkaunt = bitta qurilma tekshiruvi uchun)."""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        from .models import DeviceSession
-
-        session = DeviceSession.objects.filter(user=request.user).first()
-        if session is None:
-            return Response(None)
-        return Response({
-            'device_label': session.device_label,
-            'ip_address': session.ip_address,
-            'last_seen_at': session.last_seen_at,
-            'created_at': session.created_at,
-        })
-
-
 class RefreshView(TokenRefreshView):
     throttle_scope = 'auth'
 
 
 class LogoutView(APIView):
-    """Chiqish — DeviceSession'ni tozalaydi, shu zahoti "joy" bo'shaydi
-    (boshqa/o'sha qurilma keyingi safar ziddiyatsiz kira oladi)."""
+    """Chiqish — berilgan refresh token bekor qilinadi (blacklist), qayta
+    ishlatib bo'lmaydi. Boshqa qurilmalardagi sessiyalarga ta'sir qilmaydi."""
 
     permission_classes = [IsAuthenticated]
 

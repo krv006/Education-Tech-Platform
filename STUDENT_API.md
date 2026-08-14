@@ -13,11 +13,11 @@ Deyarli barcha "list" endpointlar serverda avtomatik login qilgan o'quvchiga mos
 
 | Method | Path | Body | Javob | Tavsif |
 |---|---|---|---|---|
-| POST | `/login/` | `username`, `password`, `force`(ixtiyoriy, `"true"`) | `refresh`, `access` **yoki** 409 `{code:"device_conflict", device_label}` | Login. **Bitta akkaunt = bitta faol qurilma**: boshqa qurilmada faol sessiya bo'lsa 409 qaytadi (`device_label` bilan); `force:"true"` yuborilsa eski qurilma darhol chiqarib yuboriladi |
+| POST | `/login/` | `username`, `password` | `refresh`, `access` | Login. Bir akkaunt bilan bir vaqtda istalgancha qurilmadan kirish mumkin |
+| POST | `/logout/` | `refresh`(ixtiyoriy) | 204 | Chiqish — berilgan refresh token bekor qilinadi; boshqa qurilmalarga ta'sir qilmaydi |
 | POST | `/token/refresh/` | `refresh` | `access` | Access tokenni yangilash |
 | GET | `/me/` | — | `id, username, first_name, last_name, role, phone, invite_code, avatar` | O'z profili |
 | PUT/PATCH | `/me/` | `username, first_name, last_name, phone, avatar`(multipart, rasm fayl) | yuqoridagidek | Profilni tahrirlash (profil rasmini shu orqali o'rnatadi) |
-| GET | `/sessions/` | — | `{device_label, ip_address, last_seen_at, created_at}` yoki `null` | Hozir qaysi qurilmada faol ekanligim |
 | GET | `/logins/` | — | ro'yxat: `{at, ip, user_agent, new_ip, new_device}` | O'z login tarixim (qurilma/IP o'zgargan hollari belgilangan) |
 | GET | `/links/` | — | ro'yxat: `id, parent, student, status(pending/approved/declined), created_at, responded_at` | Ota-onadan kelgan bog'lanish so'rovlari |
 | POST | `/links/{id}/respond/` | `action`: `"approve"` \| `"decline"` | link obyekti | Ota-ona so'rovini tasdiqlash/rad etish |
