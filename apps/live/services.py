@@ -376,6 +376,34 @@ def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     return True
 
 
+def deny_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """O'qituvchi mikrofon so'rovini rad etadi — LiveKit ruxsati BERILMAYDI,
+    faqat navbatdagi so'rov o'chiriladi. So'rov hal bo'lgani uchun (o'chirilgani
+    uchun) o'quvchi keyin yana so'ray oladi."""
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+
+    from apps.lessons.models import MicRequest
+    deleted, _ = MicRequest.objects.filter(lesson=lesson, student=student).delete()
+
+    if deleted:
+        try:
+            from apps.board import realtime as board_realtime
+            board_realtime.broadcast_mic_denied(lesson_id, student_id=str(student.id))
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('mic_denied broadcast failed')
+
+        audit.record(
+            action='room.deny_mic', actor=teacher, target=lesson,
+            meta={'student_id': str(student.id)}, request=request,
+        )
+    return bool(deleted)
+
+
 # ── Taklif va chetlashtirish (Zoom uslubidagi invite/ban) ──────────────────
 
 def _get_owned_lesson(*, teacher: User, lesson_id) -> Lesson:

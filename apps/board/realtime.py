@@ -56,3 +56,9 @@ def broadcast_mic_granted(lesson_id, student_id: str) -> None:
     o'quvchining o'zi (mikrofon tugmasini yoqish uchun) va o'qituvchi
     (kutayotgan so'rovlar ro'yxatidan olib tashlash uchun) o'zi filtrlaydi."""
     _send(lesson_id, {'type': 'mic_granted', 'student_id': student_id})
+
+
+def broadcast_mic_denied(lesson_id, student_id: str) -> None:
+    """O'qituvchi so'rovni rad etdi — o'quvchining o'zi "so'rash" tugmasini
+    qayta yoqishi, o'qituvchi esa kutish ro'yxatidan olib tashlashi uchun."""
+    _send(lesson_id, {'type': 'mic_denied', 'student_id': student_id})

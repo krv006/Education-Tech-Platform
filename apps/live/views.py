@@ -98,6 +98,21 @@ class GrantMicView(APIView):
         return Response({'ok': True})
 
 
+class DenyMicView(APIView):
+    """O'qituvchi: mikrofon so'rovini rad etadi (ruxsat bermasdan navbatdan chiqaradi)."""
+
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        denied = services.deny_mic(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'denied': denied})
+
+
 class InviteView(APIView):
     """O'qituvchi: darsga taklif bildirishnomasi. `student_id` bo'lmasa — hammaga."""
 

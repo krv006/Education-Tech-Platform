@@ -138,6 +138,7 @@ parent:      child.create, link.request/view, consent.manage,
 | POST | `/live/allow-share/` | teacher (o'ziniki, `room.moderate`) | `lesson_id, identity` | `{"ok": true}` | O'quvchiga ekran ulashish ruxsatini jonli beradi |
 | POST | `/live/request-mic/` | student | `lesson_id` | `{"ok": true}` | **Yangi**: mikrofon so'rash ("qo'l ko'tarish") — o'qituvchiga doska WebSocket kanali orqali darhol ko'rinadi |
 | POST | `/live/grant-mic/` | teacher (o'ziniki, `room.moderate`) | `lesson_id, student_id` | `{"ok": true}` | **Yangi**: o'quvchiga mikrofon ruxsatini jonli ochadi |
+| POST | `/live/deny-mic/` | teacher (o'ziniki, `room.moderate`) | `lesson_id, student_id` | `{"denied": bool}` | **Yangi**: so'rovni rad etadi — ruxsat berilmaydi, faqat navbatdan chiqadi |
 | POST | `/live/invite/` | teacher (o'ziniki, `room.moderate`) | `lesson_id`, `student_id`(ixtiyoriy) | `{"invited": N}` | **Yangi**: darsga taklif bildirishnomasi. `student_id` bo'lmasa — kursga yozilgan hammaga |
 | POST | `/live/ban/` | teacher (o'ziniki, `room.moderate`) | `lesson_id, student_id` | `{"ok": true}` | **Yangi**: o'quvchini shu darsdan chetlashtiradi — hozir xonada bo'lsa darhol chiqaradi, qayta kirishini bloklaydi (faqat shu darsga, kursga emas) |
 | POST | `/live/unban/` | teacher (o'ziniki, `room.moderate`) | `lesson_id, student_id` | `{"unbanned": bool}` | **Yangi**: chetlashtirishni bekor qiladi |
@@ -157,6 +158,12 @@ So'rov bazada ham saqlanadi (faqat WS xabari emas) — `GET /board/{lesson_id}/`
 javobida (teacher uchun, `away_students` bilan bir qatorda) `pending_mic_requests:
 [{student_id, name}]` maydoni bor, shuning uchun o'qituvchi so'rovdan keyin kirsa
 yoki sahifani yangilasa ham joriy so'rovlar yo'qolib qolmaydi.
+
+**Navbat qoidalari**: `pending_mic_requests` **FIFO** tartibida (birinchi so'ragan
+birinchi); bitta o'quvchi bir vaqtda faqat bitta faol so'rovga ega (qayta-qayta
+so'rasa dublikat yo'q); so'rov faqat `grant-mic` (ruxsat) yoki `deny-mic` (rad —
+`{"type": "mic_denied", "student_id"}` signali bilan) orqali navbatdan chiqadi,
+shundan keyingina o'quvchi yana so'ray oladi.
 
 ### Darsdan chetlashtirish (invite/ban) — frontendda nima kutish kerak
 
@@ -301,7 +308,7 @@ Frontendda o'quvchi rolida ko'rsatilmasin:
 
 - Auth: `/register/`, `/children/`, `/links/request/`, `/consents/` — faqat ota-ona/o'qituvchi
 - Kurs/dars: yaratish/tahrirlash/o'chirish, `/courses/requests/`, `/courses/{id}/schedule/`, `/courses/{id}/search-students/`, `/courses/{id}/students/`, `/lessons/{id}/finish/` — faqat o'qituvchi/admin
-- Live: `/live/allow-share/`, `/live/grant-mic/`, `/live/invite/`, `/live/ban/`, `/live/unban/` — faqat o'qituvchi
+- Live: `/live/allow-share/`, `/live/grant-mic/`, `/live/deny-mic/`, `/live/invite/`, `/live/ban/`, `/live/unban/` — faqat o'qituvchi
 - Chat: `/chat/rooms/direct/respond/` — faqat o'qituvchi
 - Doska: `/board/{id}/sheet/`, `/board/{id}/grant/` — faqat o'qituvchi
 - Homework: vazifa yaratish/o'chirish, `/submissions/{id}/recheck/`, `/submissions/{id}/review/` — faqat o'qituvchi

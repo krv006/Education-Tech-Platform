@@ -923,6 +923,87 @@ class MicPermissionTests(APITestCase):
 
         self.assertEqual(pending_mic_requests(self.lesson), [])
 
+    def test_duplicate_request_does_not_spam_queue(self):
+        """Bitta o'quvchi bir vaqtda faqat bitta faol so'rovga ega bo'ladi —
+        qayta so'rasa dublikat qo'shilmaydi."""
+        from apps.live.services import pending_mic_requests
+
+        for _ in range(3):
+            resp = self.api(self.student).post(
+                '/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)},
+            )
+            self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(pending_mic_requests(self.lesson)), 1)
+
+    def test_pending_requests_are_fifo_ordered(self):
+        from apps.accounts.models import User
+
+        from .models import Enrollment
+
+        second = User(username='mic_s3', role=User.Role.STUDENT)
+        second.set_password('x')
+        second.save()
+        Enrollment.objects.create(course=self.course, student=second, status=Enrollment.Status.APPROVED)
+
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+        self.api(second).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+
+        from apps.live.services import pending_mic_requests
+        pending = pending_mic_requests(self.lesson)
+        self.assertEqual([p['student_id'] for p in pending], [str(self.student.id), str(second.id)])
+
+    def test_deny_mic_removes_request_without_granting_permission(self):
+        from unittest.mock import patch
+
+        from apps.live.services import pending_mic_requests
+
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            resp = self.api(self.teacher).post('/api/v1/live/deny-mic/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.data['denied'])
+            # LiveKit'ga umuman murojaat qilinmadi — faqat navbatdan olib tashlandi
+            mock_livekit_cls.assert_not_called()
+
+        self.assertEqual(pending_mic_requests(self.lesson), [])
+
+    def test_deny_unknown_request_returns_false(self):
+        resp = self.api(self.teacher).post('/api/v1/live/deny-mic/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.data['denied'])
+
+    def test_deny_mic_requires_owner_teacher(self):
+        from apps.accounts.models import User
+
+        other_teacher = User(username='mic_t4', role=User.Role.TEACHER)
+        other_teacher.set_password('x')
+        other_teacher.save()
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+        resp = self.api(other_teacher).post('/api/v1/live/deny-mic/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_can_request_again_after_denied(self):
+        from apps.live.services import pending_mic_requests
+
+        self.api(self.student).post('/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)})
+        self.api(self.teacher).post('/api/v1/live/deny-mic/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(pending_mic_requests(self.lesson), [])
+
+        resp = self.api(self.student).post(
+            '/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(pending_mic_requests(self.lesson)), 1)
+
     def test_grant_mic_requires_owner_teacher(self):
         from apps.accounts.models import User
 

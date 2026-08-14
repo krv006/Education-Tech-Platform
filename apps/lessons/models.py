@@ -221,13 +221,17 @@ class MicRequest(TimeStampedUUIDModel):
     o'qituvchi so'rovdan KEYIN kirsa yoki sahifani yangilasa ham, joriy
     kutayotgan so'rovlar yo'qolib qolmaydi (apps.live.services.pending_mic_requests
     orqali qayta tiklanadi, apps.board.services.get_board() javobiga qo'shiladi).
-    Ruxsat berilganda (yoki o'quvchi darsdan chiqib ketganda) o'chiriladi.
+    Ruxsat berilganda yoki rad etilganda o'chiriladi (apps.live.services.grant_mic /
+    deny_mic). Bitta o'quvchi — bitta darsda bir vaqtda faqat BITTA faol so'rov
+    (`unique_lesson_student_mic_request` + get_or_create — qayta so'rasa dublikat
+    yaratilmaydi; so'rov hal bo'lgach — o'chirilgach — yangi so'rov yuborishi mumkin).
     """
 
     lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='mic_requests')
     student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='mic_requests')
 
     class Meta:
+        ordering = ['created_at']  # FIFO — birinchi so'ragan birinchi ko'rinadi
         constraints = [
             UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_mic_request'),
         ]

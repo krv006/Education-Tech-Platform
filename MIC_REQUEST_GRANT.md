@@ -13,6 +13,12 @@ o'quvchi gapirish uchun avval so'rashi, o'qituvchi ruxsat berishi kerak
 |---|---|---|---|---|
 | POST | `/api/v1/live/request-mic/` | student | `{"lesson_id": "uuid"}` | `{"ok": true}` |
 | POST | `/api/v1/live/grant-mic/` | teacher (shu darsning o'qituvchisi) | `{"lesson_id": "uuid", "student_id": "uuid"}` | `{"ok": true}` |
+| POST | `/api/v1/live/deny-mic/` | teacher (shu darsning o'qituvchisi) | `{"lesson_id": "uuid", "student_id": "uuid"}` | `{"denied": bool}` |
+
+**Navbat qoidalari**:
+- **FIFO** — `pending_mic_requests` har doim so'ralgan tartibda qaytadi (eng birinchi so'ragan birinchi).
+- Bitta o'quvchi bir vaqtda **faqat bitta** faol so'rovga ega bo'ladi — qayta-qayta bossa ham navbatga dublikat qo'shilmaydi.
+- So'rov faqat ikki holatda navbatdan chiqadi: **ruxsat berilsa** (`grant-mic`, mikrofon yoqiladi) yoki **rad etilsa** (`deny-mic`, mikrofon berilmaydi, LiveKit'ga umuman murojaat qilinmaydi). Ikkalasidan birontasi bo'lgach, o'quvchi yana yangi so'rov yubora oladi.
 
 ## Qanday ishlaydi
 
@@ -37,21 +43,21 @@ o'quvchi gapirish uchun avval so'rashi, o'qituvchi ruxsat berishi kerak
    "pending_mic_requests": [{"student_id": "uuid", "name": "Alisher"}]
    ```
    Frontend doska sahifasini ochganda/yangilaganda shu maydondan boshlang'ich
-   ro'yxatni oling, keyin WS `mic_request`/`mic_granted` orqali jonli yangilang.
-3. O'qituvchi "Ruxsat berish" tugmasini bosadi → `POST /live/grant-mic/`.
-4. Shu zahoti ikkala tomonga ham xuddi shu doska kanali orqali signal keladi:
-   ```json
-   { "type": "mic_granted", "student_id": "uuid" }
-   ```
-   - Agar `student_id` **o'zingizniki** bo'lsa (o'quvchining o'zi) → mikrofon
-     tugmasini yoqing (LiveKit SDK darajasida endi haqiqatan gapira oladi).
+   ro'yxatni oling, keyin WS `mic_request`/`mic_granted`/`mic_denied` orqali
+   jonli yangilang. Ro'yxat FIFO tartibida keladi — birinchi so'ragan birinchi.
+3. O'qituvchi ikki xil javob bera oladi:
+   - **Ruxsat berish** → `POST /live/grant-mic/` → hammaga `{"type": "mic_granted", "student_id": "uuid"}`.
+   - **Rad etish** → `POST /live/deny-mic/` → hammaga `{"type": "mic_denied", "student_id": "uuid"}` (mikrofon berilmaydi, so'rov shunchaki navbatdan olib tashlanadi — o'quvchi xohlasa yana so'ray oladi).
+4. Ikkala holatda ham:
+   - Agar `student_id` **o'zingizniki** bo'lsa (o'quvchining o'zi) → `mic_granted`da mikrofon tugmasini yoqing, `mic_denied`da "so'rash" tugmasini qayta faollashtiring.
    - Agar siz **o'qituvchi** bo'lsangiz → shu o'quvchini "kutayotganlar"
      ro'yxatidan olib tashlang (server tomonida ham bazadagi so'rov yozuvi
      avtomatik o'chiriladi — keyingi `GET /board/` chaqiruvida ham qaytmaydi).
 
 ## Xato holatlari
 
-- `grant-mic`ni darsning egasi bo'lmagan o'qituvchi chaqirsa → `403`
+- `grant-mic`/`deny-mic`ni darsning egasi bo'lmagan o'qituvchi chaqirsa → `403`
+- `deny-mic`ni hech qanday faol so'rov yo'q o'quvchi uchun chaqirsa → `200 {"denied": false}` (xato emas, shunchaki hech narsa o'zgarmadi)
 - `student_id` topilmasa → `404`
 - `request-mic`ni kursga yozilmagan foydalanuvchi chaqirsa → `403`
 
