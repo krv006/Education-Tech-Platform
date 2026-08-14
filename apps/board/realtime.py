@@ -42,3 +42,17 @@ def broadcast_focus(lesson_id, student_id: str, name: str, kind: str) -> None:
     """O'quvchi dars oynasidan chiqdi/qaytdi — o'qituvchiga darhol ko'rinishi
     uchun (frontend faqat is_teacher=true bo'lganda ko'rsatadi)."""
     _send(lesson_id, {'type': 'focus', 'student_id': student_id, 'name': name, 'kind': kind})
+
+
+def broadcast_mic_request(lesson_id, student_id: str, name: str) -> None:
+    """O'quvchi mikrofon so'radi — o'qituvchiga darhol ko'rinishi uchun
+    (frontend faqat is_teacher=true bo'lganda "qo'l ko'tarildi" belgisini
+    ko'rsatadi)."""
+    _send(lesson_id, {'type': 'mic_request', 'student_id': student_id, 'name': name})
+
+
+def broadcast_mic_granted(lesson_id, student_id: str) -> None:
+    """O'qituvchi mikrofonga ruxsat berdi — hammaga tarqatiladi: shu
+    o'quvchining o'zi (mikrofon tugmasini yoqish uchun) va o'qituvchi
+    (kutayotgan so'rovlar ro'yxatidan olib tashlash uchun) o'zi filtrlaydi."""
+    _send(lesson_id, {'type': 'mic_granted', 'student_id': student_id})

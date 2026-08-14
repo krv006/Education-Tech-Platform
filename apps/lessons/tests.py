@@ -823,3 +823,136 @@ class InviteBanTests(APITestCase):
             'lesson_id': str(self.lesson.id), 'student_id': str(uuid.uuid4()),
         })
         self.assertEqual(resp.status_code, 404)
+
+
+class MicPermissionTests(APITestCase):
+    """Mikrofon so'rov/ruxsat: o'quvchi standart holatda mikrofonsiz kiradi,
+    so'raydi ("qo'l ko'tarish"), o'qituvchi ruxsat beradi."""
+
+    def setUp(self):
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('mic_t', User.Role.TEACHER)
+        self.student = mk('mic_s', User.Role.STUDENT)
+        self.stranger = mk('mic_s2', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='MIC')
+        Enrollment.objects.create(course=self.course, student=self.student, status=Enrollment.Status.APPROVED)
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='L', starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def _decode(self, token):
+        import jwt
+        from django.conf import settings
+
+        return jwt.decode(token, settings.LIVEKIT_API_SECRET, algorithms=['HS256'])
+
+    def test_student_token_excludes_microphone_by_default(self):
+        resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+        sources = self._decode(resp.data['token'])['video']['canPublishSources']
+        self.assertIn('camera', sources)
+        self.assertNotIn('microphone', sources)
+
+    def test_teacher_token_unrestricted(self):
+        resp = self.api(self.teacher).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.status_code, 200)
+        video_claim = self._decode(resp.data['token'])['video']
+        self.assertNotIn('canPublishSources', video_claim)
+
+    def test_request_mic_requires_enrollment(self):
+        resp = self.api(self.stranger).post(
+            '/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_request_mic_ok_for_enrolled_student(self):
+        resp = self.api(self.student).post(
+            '/api/v1/live/request-mic/', {'lesson_id': str(self.lesson.id)},
+        )
+        self.assertEqual(resp.status_code, 200)
+
+    def test_grant_mic_requires_owner_teacher(self):
+        from apps.accounts.models import User
+
+        other_teacher = User(username='mic_t2', role=User.Role.TEACHER)
+        other_teacher.set_password('x')
+        other_teacher.save()
+        resp = self.api(other_teacher).post('/api/v1/live/grant-mic/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_grant_mic_unknown_student_404(self):
+        import uuid
+
+        resp = self.api(self.teacher).post('/api/v1/live/grant-mic/', {
+            'lesson_id': str(self.lesson.id), 'student_id': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    def test_grant_mic_adds_microphone_to_publish_sources(self):
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, ParticipantPermission, TrackSource
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.get_participant = AsyncMock(return_value=ParticipantInfo(
+                permission=ParticipantPermission(can_publish_sources=[TrackSource.CAMERA]),
+            ))
+            mock_client.room.update_participant = AsyncMock()
+            mock_client.aclose = AsyncMock()
+
+            resp = self.api(self.teacher).post('/api/v1/live/grant-mic/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+            self.assertEqual(resp.status_code, 200)
+
+            sent = mock_client.room.update_participant.call_args.args[0]
+            sources = set(sent.permission.can_publish_sources)
+            self.assertIn(TrackSource.MICROPHONE, sources)
+            self.assertIn(TrackSource.CAMERA, sources)
+
+    def test_grant_mic_preserves_existing_screen_share_permission(self):
+        """update_participant butun ro'yxatni ALMASHTIRADI — shuning uchun
+        grant_mic joriy ruxsatlarni o'qib, ustiga qo'shishi kerak, aks holda
+        avval berilgan ekran ulashish ruxsati tasodifan yo'qolib qolardi."""
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, ParticipantPermission, TrackSource
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.get_participant = AsyncMock(return_value=ParticipantInfo(
+                permission=ParticipantPermission(
+                    can_publish_sources=[TrackSource.CAMERA, TrackSource.SCREEN_SHARE],
+                ),
+            ))
+            mock_client.room.update_participant = AsyncMock()
+            mock_client.aclose = AsyncMock()
+
+            self.api(self.teacher).post('/api/v1/live/grant-mic/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+
+            sent = mock_client.room.update_participant.call_args.args[0]
+            sources = set(sent.permission.can_publish_sources)
+            self.assertIn(TrackSource.SCREEN_SHARE, sources)
+            self.assertIn(TrackSource.MICROPHONE, sources)

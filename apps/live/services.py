@@ -40,9 +40,10 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):
         raise ValidationError('Dars tugagan yoki bekor qilingan.')
 
-    # O'quvchi default ekran share qila olmaydi — o'qituvchi ruxsat berganda
-    # grant_screen_share() orqali jonli ochiladi (EduTech.docx).
-    publish_sources = None if is_teacher else ['camera', 'microphone']
+    # O'quvchi default mikrofon va ekran share qila olmaydi — o'qituvchi
+    # ruxsat berganda grant_mic()/grant_screen_share() orqali jonli ochiladi
+    # (kamera esa erkin — faqat ovoz cheklanadi, tartib buzilmasin uchun).
+    publish_sources = None if is_teacher else ['camera']
     token = (
         AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
         .with_identity(f'user-{user.id}')
@@ -210,6 +211,32 @@ def away_students(lesson: Lesson) -> list[dict]:
     ]
 
 
+def request_mic(*, user: User, lesson_id, request=None) -> None:
+    """O'quvchi mikrofon so'raydi ("qo'l ko'tarish") — o'qituvchiga doska
+    WebSocket kanali orqali darhol ko'rinadi (yangi ulanish shart emas)."""
+    try:
+        lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
+    except (Lesson.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Dars topilmadi.')
+    is_enrolled = lesson.course.enrollments.filter(
+        student=user, status=Enrollment.Status.APPROVED,
+    ).exists()
+    if not is_enrolled:
+        raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+
+    try:
+        from apps.board import realtime as board_realtime
+        board_realtime.broadcast_mic_request(
+            lesson_id, student_id=str(user.id),
+            name=user.first_name or user.username,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('mic_request broadcast failed')
+
+    audit.record(action='room.mic_request', actor=user, target=lesson, request=request)
+
+
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────
 
 def _livekit_http_url() -> str:
@@ -263,6 +290,64 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
     audit.record(
         action='room.allow_share', actor=teacher, target=lesson,
         meta={'identity': identity}, request=request,
+    )
+    return True
+
+
+def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """O'qituvchi o'quvchiga mikrofon ruxsatini jonli ochadi (LiveKit server
+    API) — kamera va (agar oldin berilgan bo'lsa) ekran ulashish ruxsatini
+    saqlab qolib, ustiga mikrofonni qo'shadi."""
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+
+    identity = f'user-{student.id}'
+
+    async def _update():
+        from livekit.protocol.room import RoomParticipantIdentity
+
+        client = LiveKitAPI(
+            url=_livekit_http_url(),
+            api_key=settings.LIVEKIT_API_KEY,
+            api_secret=settings.LIVEKIT_API_SECRET,
+        )
+        try:
+            # Joriy ruxsatlarni o'qib, ustiga mikrofonni QO'SHAMIZ — agar
+            # oldin ekran ulashish berilgan bo'lsa, uni tasodifan olib
+            # tashlab qo'ymaslik uchun (update_participant butun ro'yxatni
+            # ALMASHTIRADI, qo'shmaydi).
+            info = await client.room.get_participant(RoomParticipantIdentity(
+                room=lesson.room_name, identity=identity,
+            ))
+            sources = set(info.permission.can_publish_sources) | {TrackSource.CAMERA, TrackSource.MICROPHONE}
+            await client.room.update_participant(UpdateParticipantRequest(
+                room=lesson.room_name,
+                identity=identity,
+                permission=ParticipantPermission(
+                    can_subscribe=True,
+                    can_publish=True,
+                    can_publish_data=True,
+                    can_publish_sources=list(sources),
+                ),
+            ))
+        finally:
+            await client.aclose()
+
+    asyncio.run(_update())
+
+    try:
+        from apps.board import realtime as board_realtime
+        board_realtime.broadcast_mic_granted(lesson_id, student_id=str(student.id))
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('mic_granted broadcast failed')
+
+    audit.record(
+        action='room.grant_mic', actor=teacher, target=lesson,
+        meta={'student_id': str(student.id)}, request=request,
     )
     return True
 

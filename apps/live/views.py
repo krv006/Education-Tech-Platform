@@ -71,6 +71,33 @@ class AllowShareView(APIView):
         return Response({'ok': True})
 
 
+class RequestMicView(APIView):
+    """O'quvchi: mikrofon so'rash ("qo'l ko'tarish")."""
+
+    permission_classes = [RequirePerm('room.token')]
+
+    def post(self, request):
+        services.request_mic(
+            user=request.user, lesson_id=request.data.get('lesson_id'), request=request,
+        )
+        return Response({'ok': True})
+
+
+class GrantMicView(APIView):
+    """O'qituvchi: o'quvchiga mikrofon ruxsatini beradi."""
+
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        services.grant_mic(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'ok': True})
+
+
 class InviteView(APIView):
     """O'qituvchi: darsga taklif bildirishnomasi. `student_id` bo'lmasa — hammaga."""
 
