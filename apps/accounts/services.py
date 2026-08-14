@@ -249,3 +249,28 @@ def enforce_single_session(*, user: User, tokens: dict, request, force: bool) ->
     )
     cache.set(session_cache_key(user.id), new_jti, 60 * 60 * 24 * 7)
     return None
+
+
+@transaction.atomic
+def logout(*, user: User, refresh_token: str | None = None, request=None) -> None:
+    """Chiqish — DeviceSession'ni tozalaydi va Redis keshini o'chiradi, shu
+    zahoti "joy" bo'shaydi (enforce_single_session endi ziddiyat ko'rmaydi).
+
+    `refresh_token` berilsa (bo'lishi kerak) — u ham bekor qilinadi, qayta
+    ishlatib bo'lmaydi. Joriy access token esa DeviceSession o'chirilgani
+    sabab keyingi so'rovda avtomatik rad etiladi (SingleSessionJWTAuthentication
+    kesh/DB'da mos session_jti topolmay 401 qaytaradi) — alohida blacklist
+    qilish shart emas.
+    """
+    from django.core.cache import cache
+
+    if refresh_token:
+        try:
+            from rest_framework_simplejwt.tokens import RefreshToken
+            RefreshToken(refresh_token).blacklist()
+        except Exception:  # noqa: BLE001 — token allaqachon yaroqsiz/eskirgan bo'lishi mumkin
+            pass
+
+    DeviceSession.objects.filter(user=user).delete()
+    cache.delete(session_cache_key(user.id))
+    audit.record(action='auth.logout', actor=user, target=user, request=request)

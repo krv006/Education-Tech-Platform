@@ -248,3 +248,48 @@ class DeviceSessionTests(APITestCase):
 
         resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': old_refresh})
         self.assertEqual(resp.status_code, 401)
+
+    def test_logout_frees_device_for_conflict_free_relogin(self):
+        first = self._login('Chrome/Windows')
+        access = first.json()['access']
+
+        out = self.client.post(
+            '/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+        self.assertEqual(out.status_code, 204)
+
+        # endi "joy" bo'sh — boshqa qurilmadan force'siz ham konfliktsiz kiradi
+        second = self._login('Firefox/Mac')
+        self.assertEqual(second.status_code, 200)
+
+    def test_logout_invalidates_current_access_token_immediately(self):
+        first = self._login('Chrome/Windows')
+        access = first.json()['access']
+
+        self.client.post('/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {access}')
+        self.assertEqual(me.status_code, 401)
+
+    def test_logout_blacklists_given_refresh_token(self):
+        first = self._login('Chrome/Windows')
+        access, refresh = first.json()['access'], first.json()['refresh']
+
+        self.client.post(
+            '/api/v1/auth/logout/', {'refresh': refresh}, HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+
+        resp = self.client.post('/api/v1/auth/token/refresh/', {'refresh': refresh})
+        self.assertEqual(resp.status_code, 401)
+
+    def test_logout_requires_auth(self):
+        resp = self.client.post('/api/v1/auth/logout/', {})
+        self.assertEqual(resp.status_code, 401)
+
+    def test_current_session_null_after_logout(self):
+        access = self._login('Chrome/Windows').json()['access']
+        self.client.post('/api/v1/auth/logout/', {}, HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        # sessiya endpointi endi login talab qiladi (token o'zi ham yaroqsiz)
+        resp = self.client.get('/api/v1/auth/sessions/', HTTP_AUTHORIZATION=f'Bearer {access}')
+        self.assertEqual(resp.status_code, 401)

@@ -112,6 +112,21 @@ class RefreshView(TokenRefreshView):
     throttle_scope = 'auth'
 
 
+class LogoutView(APIView):
+    """Chiqish — DeviceSession'ni tozalaydi, shu zahoti "joy" bo'shaydi
+    (boshqa/o'sha qurilma keyingi safar ziddiyatsiz kira oladi)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        services.logout(
+            user=request.user,
+            refresh_token=request.data.get('refresh'),
+            request=request,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class MeView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = UserSerializer
