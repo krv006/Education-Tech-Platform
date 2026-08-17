@@ -621,7 +621,7 @@ async def _egress_active(room_name: str) -> str | None:
 async def _egress_start(room_name: str, file_name: str) -> str:
     from livekit.protocol.egress import (
         EncodedFileOutput,
-        EncodingOptionsPreset,
+        EncodingOptions,
         RoomCompositeEgressRequest,
     )
 
@@ -635,9 +635,18 @@ async def _egress_start(room_name: str, file_name: str) -> str:
             room_name=room_name,
             layout='speaker',
             audio_only=False,
-            # 720p/30 — default 1080p o'rniga: egress (Chrome kompozitor)
-            # CPU/RAM'ni ~2x kam yeydi, dars yozuvi uchun sifat yetarli
-            preset=EncodingOptionsPreset.H264_720P_30,
+            # 480p/15 — LiveKit'ning EncodingOptionsPreset ro'yxatida 480p
+            # umuman yo'q (faqat 720p/1080p bor, tekshirilgan: livekit-protocol
+            # 1.1.22, eng oxirgi versiya) — shuning uchun tayyor preset o'rniga
+            # o'zimiz `advanced` (custom EncodingOptions) bilan belgilaymiz.
+            # 720p30'ga nisbatan piksel/soniya hajmi ~5.7x kam
+            # (1280x720x30 -> 854x480x15), kompozitor+kodlash yuki shunga
+            # yaqin nisbatda tushishi kutiladi — CHIN qiymatni real yozuv
+            # bilan `docker stats egress`da tekshirish shart (pastda eslatma).
+            advanced=EncodingOptions(
+                width=854, height=480, framerate=15,
+                video_bitrate=900, audio_bitrate=64, audio_frequency=44100,
+            ),
             file_outputs=[EncodedFileOutput(
                 filepath=f'{settings.EGRESS_OUTPUT_PREFIX}/{file_name}',
             )],
