@@ -57,25 +57,14 @@ services:
       - recordings:/out
     # Chrome asosidagi kompozitor uchun katta /dev/shm kerak
     shm_size: 1gb
-    # Egress eng "och" konteyner — chegara qo'yamiz, API/darslarga
-    # CPU yetmay qolmasin.
-    # PROVISIONAL qiymat — 480p/15fps'ga o'tkazilgach (_egress_start,
-    # apps/live/services.py) taxminan hisoblangan, HALI REAL test bilan
-    # tasdiqlanmagan:
-    #   - LiveKit'ning o'z hujjati: RoomComposite egress "2-6 CPU" oralig'ida
-    #     ishlatishi mumkin, umumiy tavsiya — 4 CPU (resolyutsiyadan qat'iy
-    #     nazar, chunki xarajat qisman kompozitor/qatnashchilar soniga ham
-    #     bog'liq, faqat chiqish o'lchamiga emas).
-    #   - Yangi preset eski 720p/30'ga nisbatan ~5.7x kam piksel/soniya beradi
-    #     (1280x720x30 -> 854x480x15), shu sabab 4 dan pasayish mantiqiy,
-    #     lekin LiveKit'ning hujjatlashtirilgan pastki chegarasi (~2 CPU)dan
-    #     pastga tushirish RISKLI — kam bo'lsa egress so'rovni "resource
-    #     exhausted" bilan RAD ETADI (apps/live/services.py dagi
-    #     _friendly_egress_error shu holatni allaqachon ushlaydi).
-    # ISHGA TUSHIRISHDAN OLDIN: bitta real darsni yozib, shu konteynerda
-    # `docker stats egress` bilan haqiqiy CPU sarfini kuzating — shundan
-    # keyingina bu raqamni yanada pasaytiring yoki tasdiqlang.
-    cpus: 3
+    # LiveKit egress RoomComposite turi uchun 4 CPU'ni QATTIQ TALAB QILADI
+    # (rezolyutsiya/preset'dan qat'iy nazar — bu ish TURIGA qarab, chiqish
+    # hajmiga emas). 3 bilan sinab ko'rildi (2026-08-18/19): xizmat ishga
+    # tushadi, lekin o'zini "bu turdagi ish uchun yetarli emas" deb belgilab,
+    # HAR QANDAY yangi yozuv so'rovini rad etadi ("no response from servers",
+    # ~25s kutgandan keyin) — barcha video yozuvlar ishlamay qoldi.
+    # Tasdiqlangan (egress'ning o'z start-up logi): "minimumCpu": 4.
+    cpus: 4
     mem_limit: 2g
     depends_on:
       - redis
