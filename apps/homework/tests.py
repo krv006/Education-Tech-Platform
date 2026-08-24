@@ -5,6 +5,7 @@ validatsiyasi), AI natijaning saqlanishi, xatoda status=error, ko'rish
 huquqlari (o'quvchi/o'qituvchi/ota-ona/begona), qayta tekshirish, fan
 aniqlash va JSON validatsiya birliklari.
 """
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -438,6 +439,86 @@ class HomeworkTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(r.data), 1)
         self.assertIsNone(r.data[0]['my_submission'])
+
+
+@override_settings(HOMEWORK_CHECK_ASYNC=False)
+class DeadlineReminderTests(TestCase):
+    """Vazifa berilganda va deadline yaqinlashganda (yarim vaqt / 1 soat)
+    bildirishnoma yuborilishi — faqat hali topshirmagan o'quvchilarga,
+    har biri faqat bir marta."""
+
+    def setUp(self):
+        from apps.notifications.models import NotificationRecipient
+
+        self.NotificationRecipient = NotificationRecipient
+        self.teacher = make('dr_t', User.Role.TEACHER)
+        self.student = make('dr_s1', User.Role.STUDENT)
+        self.other_student = make('dr_s2', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='DR', subject='Matematika')
+        Enrollment.objects.create(course=self.course, student=self.student, status=Enrollment.Status.APPROVED)
+        Enrollment.objects.create(course=self.course, student=self.other_student, status=Enrollment.Status.APPROVED)
+
+    def inbox_texts(self, student):
+        return [
+            r.notification.description
+            for r in self.NotificationRecipient.objects.filter(user=student).select_related('notification')
+        ]
+
+    def test_creating_assignment_notifies_all_enrolled_students(self):
+        from . import services
+
+        services.create_assignment(teacher=self.teacher, course_id=self.course.id, title='Uy vazifasi 1')
+        self.assertTrue(any('yangi uy vazifasi' in t for t in self.inbox_texts(self.student)))
+        self.assertTrue(any('yangi uy vazifasi' in t for t in self.inbox_texts(self.other_student)))
+
+    def test_halfway_reminder_sent_once_to_pending_students_only(self):
+        from .models import Assignment, Submission
+        from . import services
+
+        created = timezone.now() - timedelta(hours=2)
+        due = timezone.now() + timedelta(hours=2)  # jami 4 soat -> yarmi = created+2h = hozir
+        a = Assignment.objects.create(course=self.course, title='HW', due_at=due)
+        Assignment.objects.filter(pk=a.pk).update(created_at=created)
+        a.refresh_from_db()
+
+        Submission.objects.create(assignment=a, student=self.other_student, file=pdf_upload(), original_name='x.pdf')
+
+        sent = services.send_deadline_reminders()
+        self.assertEqual(sent['halfway'], 1)  # faqat student (other_student topshirgan)
+        self.assertTrue(any("yarmi o'tdi" in t for t in self.inbox_texts(self.student)))
+        self.assertFalse(any("yarmi o'tdi" in t for t in self.inbox_texts(self.other_student)))
+
+        # ikkinchi chaqiruv — takror yubormaydi
+        sent2 = services.send_deadline_reminders()
+        self.assertEqual(sent2['halfway'], 0)
+
+    def test_1h_reminder_fires_independently_of_halfway(self):
+        from .models import Assignment
+        from . import services
+
+        created = timezone.now() - timedelta(hours=10)
+        due = timezone.now() + timedelta(minutes=30)
+        a = Assignment.objects.create(course=self.course, title='HW2', due_at=due)
+        Assignment.objects.filter(pk=a.pk).update(
+            created_at=created,
+            reminder_halfway_sent_at=timezone.now() - timedelta(hours=5),
+        )
+
+        sent = services.send_deadline_reminders()
+        self.assertEqual(sent['halfway'], 0)
+        self.assertEqual(sent['1h'], 2)
+        self.assertTrue(any('1 soat qoldi' in t for t in self.inbox_texts(self.student)))
+
+    def test_past_due_assignment_is_skipped(self):
+        from .models import Assignment
+        from . import services
+
+        Assignment.objects.create(
+            course=self.course, title='Old',
+            due_at=timezone.now() - timedelta(hours=1),
+        )
+        sent = services.send_deadline_reminders()
+        self.assertEqual(sent, {'halfway': 0, '1h': 0})
 
 
 class AiUnitTests(TestCase):

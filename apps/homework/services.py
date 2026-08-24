@@ -6,6 +6,7 @@ settings.HOMEWORK_CHECK_ASYNC=False qilib sinxron ishlatiladi.
 """
 import re
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
@@ -215,7 +216,87 @@ def create_assignment(*, teacher: User, course_id, title: str, description: str 
         skill_key=skill_key,
         extra_instructions=(extra_instructions or '').strip(),
     )
+    _notify_new_assignment(assignment)
     return _assignment_dict(assignment)
+
+
+def _enrolled_students(course: Course):
+    return User.objects.filter(
+        enrollments__course=course, enrollments__status=Enrollment.Status.APPROVED,
+    )
+
+
+def _notify_new_assignment(assignment: Assignment) -> None:
+    """Vazifa berilgan zahoti kursga yozilgan hamma o'quvchiga bildirishnoma."""
+    from apps.notifications.models import Notification
+    from apps.notifications.services import send_notification
+
+    description = f'«{assignment.course.title}»: yangi uy vazifasi — «{assignment.title}».'
+    for student in _enrolled_students(assignment.course):
+        send_notification(
+            sender=assignment.course.teacher, description=description,
+            target_type=Notification.Target.USER, user_id=student.id,
+        )
+
+
+def send_deadline_reminders(*, now=None) -> dict:
+    """Deadline yaqinlashganda hali topshirmagan o'quvchilarga eslatma.
+
+    Davriy chaqirish uchun mo'ljallangan (management command + tashqi cron —
+    loyihada Celery yo'q). Ikki nuqta, ikkalasi ham FAQAT BIR MARTA
+    yuboriladi (reminder_*_sent_at bilan belgilanadi):
+      - "yarim vaqt" — vazifa berilgan (created_at) va due_at orasidagi
+        oraliqning yarmi o'tganda
+      - "1 soat qoldi" — due_at'dan 1 soat oldin
+    Faqat hali Submission topshirmagan o'quvchilarga yuboriladi.
+    """
+    from apps.notifications.models import Notification
+    from apps.notifications.services import send_notification
+
+    now = now or timezone.now()
+    sent = {'halfway': 0, '1h': 0}
+
+    from django.db.models import Q
+
+    assignments = (
+        Assignment.objects.filter(due_at__isnull=False, due_at__gt=now)
+        .filter(Q(reminder_halfway_sent_at__isnull=True) | Q(reminder_1h_sent_at__isnull=True))
+        .select_related('course', 'course__teacher')
+    )
+    for a in assignments:
+        if a.due_at <= a.created_at:
+            continue  # noto'g'ri/darhol muddat — hisoblash mantiqsiz, o'tkazib yuboriladi
+        submitted_ids = set(
+            Submission.objects.filter(assignment=a).values_list('student_id', flat=True)
+        )
+        pending = [s for s in _enrolled_students(a.course) if s.id not in submitted_ids]
+        if not pending:
+            continue
+
+        halfway_at = a.created_at + (a.due_at - a.created_at) / 2
+        if a.reminder_halfway_sent_at is None and now >= halfway_at:
+            description = f'«{a.course.title}»: «{a.title}» topshirish muddatining yarmi o\'tdi.'
+            for student in pending:
+                send_notification(
+                    sender=a.course.teacher, description=description,
+                    target_type=Notification.Target.USER, user_id=student.id,
+                )
+            a.reminder_halfway_sent_at = now
+            a.save(update_fields=['reminder_halfway_sent_at'])
+            sent['halfway'] += len(pending)
+
+        if a.reminder_1h_sent_at is None and now >= a.due_at - timedelta(hours=1):
+            description = f'«{a.course.title}»: «{a.title}» topshirish muddatiga 1 soat qoldi!'
+            for student in pending:
+                send_notification(
+                    sender=a.course.teacher, description=description,
+                    target_type=Notification.Target.USER, user_id=student.id,
+                )
+            a.reminder_1h_sent_at = now
+            a.save(update_fields=['reminder_1h_sent_at'])
+            sent['1h'] += len(pending)
+
+    return sent
 
 
 def delete_assignment(*, teacher: User, assignment_id) -> None:
