@@ -47,6 +47,10 @@ class Assignment(TimeStampedUUIDModel):
     skill_key = CharField(max_length=20, blank=True)
     # O'qituvchining AI'ga qo'shimcha ko'rsatmasi ("7-sinf darajasida", "qat'iy bo'l")
     extra_instructions = TextField(blank=True)
+    # Deadline eslatmalari faqat BIR MARTA yuborilishi uchun (send_deadline_reminders
+    # davriy chaqirilganda takror yubormasin) — apps/homework/services.py
+    reminder_halfway_sent_at = DateTimeField(null=True, blank=True)
+    reminder_1h_sent_at = DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']
