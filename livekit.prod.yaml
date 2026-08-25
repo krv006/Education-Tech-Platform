@@ -5,7 +5,7 @@ port: 7880
 rtc:
   tcp_port: 7881
   port_range_start: 50000
-  port_range_end: 50100
+  port_range_end: 51000
   # Serverning tashqi IP sini STUN orqali avtomatik aniqlaydi.
   # Ishlamasa: docker-compose.prod.yml da command ga --node-ip <SERVER_PUBLIC_IP> qo'shing.
   use_external_ip: true

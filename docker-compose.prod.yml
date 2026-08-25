@@ -33,7 +33,7 @@ services:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?}: ${LIVEKIT_API_SECRET:?}"
     ports:
       - "7881:7881"                    # WebRTC TCP fallback
-      - "50000-50100:50000-50100/udp"  # WebRTC media
+      - "50000-51000:50000-51000/udp"  # WebRTC media
     volumes:
       - ./livekit.prod.yaml:/etc/livekit.yaml:ro
     depends_on:
