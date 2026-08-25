@@ -236,6 +236,7 @@ def _notify_new_assignment(assignment: Assignment) -> None:
         send_notification(
             sender=assignment.course.teacher, description=description,
             target_type=Notification.Target.USER, user_id=student.id,
+            link_type='assignment', link_id=str(assignment.id),
         )
 
 
@@ -280,6 +281,7 @@ def send_deadline_reminders(*, now=None) -> dict:
                 send_notification(
                     sender=a.course.teacher, description=description,
                     target_type=Notification.Target.USER, user_id=student.id,
+                    link_type='assignment', link_id=str(a.id),
                 )
             a.reminder_halfway_sent_at = now
             a.save(update_fields=['reminder_halfway_sent_at'])
@@ -291,6 +293,7 @@ def send_deadline_reminders(*, now=None) -> dict:
                 send_notification(
                     sender=a.course.teacher, description=description,
                     target_type=Notification.Target.USER, user_id=student.id,
+                    link_type='assignment', link_id=str(a.id),
                 )
             a.reminder_1h_sent_at = now
             a.save(update_fields=['reminder_1h_sent_at'])

@@ -37,6 +37,7 @@ def sanitize_html(html: str) -> str:
 @transaction.atomic
 def send_notification(
     *, sender: User, description: str, target_type: str, user_id=None, request=None,
+    link_type: str = '', link_id: str = '',
 ) -> Notification:
     if target_type not in Notification.Target.values:
         raise ValidationError({'target_type': "'user' yoki 'all' bo'lishi kerak."})
@@ -54,6 +55,7 @@ def send_notification(
 
     notification = Notification.objects.create(
         sender=sender, description=clean, target_type=target_type,
+        link_type=link_type, link_id=link_id,
     )
     NotificationRecipient.objects.bulk_create([
         NotificationRecipient(notification=notification, user=u) for u in recipients
