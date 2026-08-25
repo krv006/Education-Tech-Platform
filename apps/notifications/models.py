@@ -28,6 +28,12 @@ class Notification(TimeStampedUUIDModel):
     # Admin CKEditor'da yozgan matn — server tomonda tozalangan (sanitize) HTML
     description = TextField()
     target_type = CharField(max_length=8, choices=Target.choices)
+    # Frontend bosilganda qayerga o'tishi kerakligini bildiradi (masalan
+    # link_type='assignment', link_id=<uuid>) — ixtiyoriy, umumiy admin
+    # xabarlarida bo'sh qoladi. AuditLog.target_type/target_id bilan bir xil
+    # naqsh (CharField, FK emas — turli modellarga ishora qilishi mumkin).
+    link_type = CharField(max_length=32, blank=True)
+    link_id = CharField(max_length=64, blank=True)
 
     class Meta:
         ordering = ['-created_at']

@@ -471,6 +471,16 @@ class DeadlineReminderTests(TestCase):
         self.assertTrue(any('yangi uy vazifasi' in t for t in self.inbox_texts(self.student)))
         self.assertTrue(any('yangi uy vazifasi' in t for t in self.inbox_texts(self.other_student)))
 
+    def test_notification_carries_assignment_link(self):
+        from . import services
+
+        assignment = services.create_assignment(
+            teacher=self.teacher, course_id=self.course.id, title='Havolali vazifa',
+        )
+        recipient = self.NotificationRecipient.objects.filter(user=self.student).latest('created_at')
+        self.assertEqual(recipient.notification.link_type, 'assignment')
+        self.assertEqual(recipient.notification.link_id, str(assignment['id']))
+
     def test_halfway_reminder_sent_once_to_pending_students_only(self):
         from .models import Assignment, Submission
         from . import services
