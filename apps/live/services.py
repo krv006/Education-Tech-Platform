@@ -549,3 +549,31 @@ def stop_recording(*, lesson: Lesson) -> None:
         logging.getLogger('apps').info('egress stop: %s', exc)
     recording.ended_at = timezone.now()
     recording.save(update_fields=['ended_at', 'updated_at'])
+
+
+def end_room(lesson: Lesson) -> None:
+    """LiveKit xonasini BUTUNLAY o'chiradi — barcha ishtirokchilarni (video/
+    audio) bir vaqtda uzadi. Dars rejalashtirilgan vaqti tugab, avtomatik
+    yakunlanganda ishlatiladi (apps.lessons.services.auto_finish_expired_lessons) —
+    o'qituvchi qo'lda "tugatish"ni bosmagan bo'lsa ham, video cheksiz
+    ochiq qolib ketmasin. Xona allaqachon bo'sh/yo'q bo'lsa ham xato
+    bermaydi (best-effort, xuddi stop_recording kabi)."""
+    import logging
+
+    async def _delete():
+        from livekit.protocol.room import DeleteRoomRequest
+
+        client = LiveKitAPI(
+            url=_livekit_http_url(),
+            api_key=settings.LIVEKIT_API_KEY,
+            api_secret=settings.LIVEKIT_API_SECRET,
+        )
+        try:
+            await client.room.delete_room(DeleteRoomRequest(room=lesson.room_name))
+        finally:
+            await client.aclose()
+
+    try:
+        asyncio.run(_delete())
+    except Exception as exc:  # noqa: BLE001 — xona allaqachon yo'q bo'lishi mumkin
+        logging.getLogger('apps').info('end_room: %s', exc)
