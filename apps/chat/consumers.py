@@ -38,6 +38,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.group = group_name(room_id)
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
+        # Ulanish paytida kurs darsi allaqachon LIVE bo'lsa — darhol xabar
+        # beramiz. lesson_live signali BIR MARTA (dars boshlanganda) yuboriladi;
+        # shu lahzada ulanmagan/qayta ulangan mijoz uni butunlay o'tkazib
+        # yuborishi mumkin edi, sahifani yangilamaguncha bilmasdi.
+        live_lesson = await self._live_lesson(room_id)
+        if live_lesson:
+            await self.send_json({'type': 'lesson_live', 'lesson': live_lesson})
 
     async def disconnect(self, code):
         if hasattr(self, 'group'):
@@ -99,6 +106,23 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         except ChatRoom.DoesNotExist:
             return False
         return selectors.can_read(user, room)
+
+    @database_sync_to_async
+    def _live_lesson(self, room_id):
+        from apps.lessons.models import Lesson
+
+        from .models import ChatRoom
+
+        try:
+            room = ChatRoom.objects.select_related('course').get(pk=room_id)
+        except ChatRoom.DoesNotExist:
+            return None
+        if room.kind != ChatRoom.Kind.COURSE or room.course_id is None:
+            return None
+        lesson = room.course.lessons.filter(status=Lesson.Status.LIVE).first()
+        if lesson is None:
+            return None
+        return {'id': str(lesson.id), 'title': lesson.title, 'room_name': lesson.room_name}
 
     @database_sync_to_async
     def _send_message(self, user, text):
