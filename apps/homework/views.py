@@ -135,3 +135,20 @@ class AssignmentFocusView(APIView):
             kind=request.data.get('kind') or '',
         )
         return Response(data)
+
+
+class ProgressReportView(APIView):
+    """Uspevaemost: fan bo'yicha uy vazifasi bajarilish foizi + o'rtacha
+    ball, va umumiy (barcha fanlar) yagona ko'rsatkich.
+
+    O'quvchi — o'zinikini ko'radi (student_id shart emas).
+    Ota-ona — ?student_id=<uuid> bilan, faqat APPROVED bog'langan bolasiniki.
+    """
+
+    permission_classes = [RequirePerm('homework.view')]
+
+    def get(self, request):
+        report = services.get_progress_report(
+            user=request.user, student_id=request.query_params.get('student_id'),
+        )
+        return Response(report)

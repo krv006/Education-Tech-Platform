@@ -573,3 +573,80 @@ def focus_summary(*, assignment_id, student: User) -> dict:
         'total_seconds': round(total_seconds),
         'timeline': timeline,
     }
+
+
+def get_progress_report(*, user: User, student_id=None) -> dict:
+    """Uspevaemost hisoboti: fan bo'yicha uy vazifasi bajarilish foizi va
+    o'rtacha ball + umumiy (barcha fanlar bo'yicha) yagona ko'rsatkich.
+
+    `student_id` berilmasa — chaqiruvchining o'zi (STUDENT bo'lishi shart).
+    Berilsa — faqat APPROVED bog'langan ota-ona ko'ra oladi.
+
+    O'rtacha ballga faqat status=DONE (o'qituvchi tasdiqlagan) topshiriqlar
+    kiradi — AI'ning tasdiqlanmagan taklifi (pending_review) hisobga
+    olinmaydi, xuddi o'quvchiga alohida submission ko'rinishida ham
+    yashirilgani kabi. Bir vazifaga bir necha marta topshirilgan bo'lsa
+    (qayta yuklash) — faqat ENG SO'NGGISI hisoblanadi.
+    """
+    if student_id:
+        if not ParentChildLink.objects.filter(
+            parent=user, student_id=student_id, status=ParentChildLink.Status.APPROVED,
+        ).exists():
+            raise PermissionDenied("Bu o'quvchining hisobotini ko'rish huquqingiz yo'q.")
+        try:
+            student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+        except (User.DoesNotExist, ValueError, TypeError):
+            raise NotFound("O'quvchi topilmadi.")
+    else:
+        if user.role != User.Role.STUDENT:
+            raise ValidationError({'student_id': 'Bu maydon majburiy.'})
+        student = user
+
+    courses = Course.objects.filter(
+        enrollments__student=student, enrollments__status=Enrollment.Status.APPROVED,
+    ).distinct()
+
+    subjects = []
+    total_assignments = 0
+    total_submitted = 0
+    all_scores = []
+    for course in courses:
+        assignments_count = Assignment.objects.filter(course=course).count()
+        submissions = (
+            Submission.objects.filter(assignment__course=course, student=student)
+            .order_by('assignment_id', '-created_at')
+        )
+        latest_by_assignment = {}
+        for sub in submissions:
+            latest_by_assignment.setdefault(sub.assignment_id, sub)
+        submitted_count = len(latest_by_assignment)
+        done_scores = [
+            s.overall_score for s in latest_by_assignment.values()
+            if s.status == Submission.Status.DONE and s.overall_score is not None
+        ]
+        avg_score = round(sum(done_scores) / len(done_scores), 1) if done_scores else None
+
+        subjects.append({
+            'course_id': str(course.id), 'course_title': course.title, 'subject': course.subject,
+            'assignments_total': assignments_count, 'assignments_submitted': submitted_count,
+            'completion_pct': (
+                round(submitted_count / assignments_count * 100, 1) if assignments_count else 0.0
+            ),
+            'avg_score': avg_score,
+        })
+        total_assignments += assignments_count
+        total_submitted += submitted_count
+        all_scores.extend(done_scores)
+
+    return {
+        'student_id': str(student.id),
+        'subjects': subjects,
+        'overall': {
+            'assignments_total': total_assignments,
+            'assignments_submitted': total_submitted,
+            'completion_pct': (
+                round(total_submitted / total_assignments * 100, 1) if total_assignments else 0.0
+            ),
+            'avg_score': round(sum(all_scores) / len(all_scores), 1) if all_scores else None,
+        },
+    }
