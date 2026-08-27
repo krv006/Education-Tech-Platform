@@ -531,6 +531,96 @@ class DeadlineReminderTests(TestCase):
         self.assertEqual(sent, {'halfway': 0, '1h': 0})
 
 
+@override_settings(HOMEWORK_CHECK_ASYNC=False)
+class ProgressReportTests(TestCase):
+    """Uspevaemost: fan bo'yicha bajarilish foizi + o'rtacha ball,
+    faqat DONE topshiriqlar hisoblanadi, qayta yuklansa — eng so'nggisi."""
+
+    def setUp(self):
+        from apps.accounts.models import ParentChildLink
+
+        self.teacher = make('pr_t', User.Role.TEACHER)
+        self.student = make('pr_s', User.Role.STUDENT)
+        self.parent = make('pr_p', User.Role.PARENT)
+        ParentChildLink.objects.create(
+            parent=self.parent, student=self.student, status=ParentChildLink.Status.APPROVED,
+        )
+        self.course = Course.objects.create(teacher=self.teacher, title='Algebra', subject='Matematika')
+        Enrollment.objects.create(course=self.course, student=self.student, status=Enrollment.Status.APPROVED)
+        self.client = APIClient()
+
+    def api(self, user):
+        self.client.force_authenticate(user)
+        return self.client
+
+    def mk_submission(self, assignment, *, status, score=None, created_at=None):
+        sub = Submission.objects.create(
+            assignment=assignment, student=self.student, file=pdf_upload(),
+            original_name='x.pdf', status=status, overall_score=score,
+        )
+        if created_at:
+            Submission.objects.filter(pk=sub.pk).update(created_at=created_at)
+        return sub
+
+    def test_empty_course_has_zero_completion_and_no_avg(self):
+        r = self.api(self.student).get('/api/v1/homework/report/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['overall'], {
+            'assignments_total': 0, 'assignments_submitted': 0,
+            'completion_pct': 0.0, 'avg_score': None,
+        })
+
+    def test_completion_and_average_count_only_done(self):
+        from .models import Assignment
+
+        a1 = Assignment.objects.create(course=self.course, title='A1')
+        Assignment.objects.create(course=self.course, title='A2')  # topshirilmagan
+        a3 = Assignment.objects.create(course=self.course, title='A3')
+
+        self.mk_submission(a1, status=Submission.Status.DONE, score=80)
+        self.mk_submission(a3, status=Submission.Status.PENDING_REVIEW, score=50)  # hali tasdiqlanmagan
+
+        r = self.api(self.student).get('/api/v1/homework/report/')
+        subj = r.data['subjects'][0]
+        self.assertEqual(subj['assignments_total'], 3)
+        self.assertEqual(subj['assignments_submitted'], 2)  # A1 va A3 topshirilgan (holatidan qat'iy nazar)
+        self.assertAlmostEqual(subj['completion_pct'], 66.7, places=1)
+        self.assertEqual(subj['avg_score'], 80.0)  # faqat DONE (A1) hisoblanadi
+
+    def test_resubmission_counts_latest_only(self):
+        from datetime import timedelta as td
+
+        from .models import Assignment
+
+        a1 = Assignment.objects.create(course=self.course, title='A1')
+        old = timezone.now() - td(hours=2)
+        self.mk_submission(a1, status=Submission.Status.ERROR, score=None, created_at=old)
+        self.mk_submission(a1, status=Submission.Status.DONE, score=95)  # qayta yuklangan, yangisi
+
+        r = self.api(self.student).get('/api/v1/homework/report/')
+        subj = r.data['subjects'][0]
+        self.assertEqual(subj['assignments_submitted'], 1)  # ikkitasi emas — bitta vazifa
+        self.assertEqual(subj['avg_score'], 95.0)  # eski ERROR emas, yangi DONE hisoblanadi
+
+    def test_student_without_student_id_sees_own_report(self):
+        r = self.api(self.student).get('/api/v1/homework/report/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['student_id'], str(self.student.id))
+
+    def test_linked_parent_can_view_with_student_id(self):
+        r = self.api(self.parent).get(f'/api/v1/homework/report/?student_id={self.student.id}')
+        self.assertEqual(r.status_code, 200)
+
+    def test_unlinked_parent_forbidden(self):
+        other_parent = make('pr_p2', User.Role.PARENT)
+        r = self.api(other_parent).get(f'/api/v1/homework/report/?student_id={self.student.id}')
+        self.assertEqual(r.status_code, 403)
+
+    def test_teacher_cannot_use_own_report_without_student_id(self):
+        r = self.api(self.teacher).get('/api/v1/homework/report/')
+        self.assertEqual(r.status_code, 400)
+
+
 class AiUnitTests(TestCase):
     def test_detect_profile(self):
         self.assertEqual(ai.detect_profile('Matematika'), ('math', '', ''))

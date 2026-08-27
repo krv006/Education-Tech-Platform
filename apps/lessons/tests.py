@@ -1072,3 +1072,69 @@ class MicPermissionTests(APITestCase):
             sources = set(sent.permission.can_publish_sources)
             self.assertIn(TrackSource.SCREEN_SHARE, sources)
             self.assertIn(TrackSource.MICROPHONE, sources)
+
+
+class AutoFinishExpiredLessonsTests(APITestCase):
+    """Vaqti tugagan, lekin hali LIVE qolib ketgan darslarni avtomatik
+    yakunlash — o'qituvchi 'tugatish'ni bosmagan/brauzeri yiqilgan holatlar."""
+
+    def setUp(self):
+        from apps.accounts.models import User
+
+        from .models import Course, Lesson
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('af_t', User.Role.TEACHER)
+        self.course = Course.objects.create(teacher=self.teacher, title='AF')
+
+        now = timezone.now()
+        # Vaqti allaqachon tugagan (45 daqiqa oldin boshlangan, 30 daqiqalik dars)
+        self.expired = Lesson.objects.create(
+            course=self.course, title='Expired', starts_at=now - timedelta(minutes=45),
+            duration_min=30, status=Lesson.Status.LIVE,
+        )
+        # Hali davom etayotgan (10 daqiqa oldin boshlangan, 45 daqiqalik dars)
+        self.still_live = Lesson.objects.create(
+            course=self.course, title='Still live', starts_at=now - timedelta(minutes=10),
+            duration_min=45, status=Lesson.Status.LIVE,
+        )
+        # SCHEDULED holatda, vaqti tugagan bo'lsa ham — tegilmasligi kerak
+        self.never_started = Lesson.objects.create(
+            course=self.course, title='Never started', starts_at=now - timedelta(hours=2),
+            duration_min=30, status=Lesson.Status.SCHEDULED,
+        )
+
+    def test_only_expired_live_lessons_are_finished(self):
+        from .models import Lesson
+        from . import services
+
+        count = services.auto_finish_expired_lessons()
+        self.assertEqual(count, 1)
+
+        self.expired.refresh_from_db()
+        self.still_live.refresh_from_db()
+        self.never_started.refresh_from_db()
+        self.assertEqual(self.expired.status, Lesson.Status.FINISHED)
+        self.assertEqual(self.still_live.status, Lesson.Status.LIVE)
+        self.assertEqual(self.never_started.status, Lesson.Status.SCHEDULED)
+
+    def test_open_attendance_is_closed(self):
+        from .models import Attendance
+        from . import services
+
+        Attendance.objects.create(lesson=self.expired, student=self.teacher, joined_at=timezone.now())
+        services.auto_finish_expired_lessons()
+        att = Attendance.objects.get(lesson=self.expired, student=self.teacher)
+        self.assertIsNotNone(att.left_at)
+
+    def test_idempotent_second_run_finishes_nothing_new(self):
+        from . import services
+
+        services.auto_finish_expired_lessons()
+        count2 = services.auto_finish_expired_lessons()
+        self.assertEqual(count2, 0)

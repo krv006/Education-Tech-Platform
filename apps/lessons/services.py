@@ -1,5 +1,6 @@
 """Lessons service layer — kurs/dars/yozilish bo'yicha yozuvchi biznes-logika."""
 import uuid
+from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -329,6 +330,35 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
         logging.getLogger('apps').exception('recording finalize failed')
     audit.record(action='lesson.finish', actor=teacher, target=lesson, request=request)
     return lesson
+
+
+def auto_finish_expired_lessons(*, now=None) -> int:
+    """Rejalashtirilgan vaqti (starts_at + duration_min) o'tib ketgan, lekin
+    hali LIVE holatda qolib ketgan darslarni avtomatik yakunlaydi — o'qituvchi
+    brauzeri yiqilib/ulanish uzilib, `lesson.finish` hech qachon chaqirilmagan
+    holatlar uchun (masalan lesson-a9371dba4a2a kabi "stuck LIVE" darslar).
+
+    Davriy chaqirish uchun mo'ljallangan (management command + tashqi cron —
+    loyihada Celery yo'q, xuddi send_deadline_reminders kabi). Video xonasi
+    ham bir vaqtda o'chiriladi (apps.live.services.end_room) — faqat status
+    emas, ishtirokchilar ham chiqarib yuboriladi.
+    """
+    now = now or timezone.now()
+    finished = 0
+    live_lessons = Lesson.objects.filter(status=Lesson.Status.LIVE).select_related('course', 'course__teacher')
+    for lesson in live_lessons:
+        ends_at = lesson.starts_at + timedelta(minutes=lesson.duration_min)
+        if now < ends_at:
+            continue
+        finish_lesson(teacher=lesson.course.teacher, lesson=lesson)
+        try:
+            from apps.live import services as live_services
+            live_services.end_room(lesson)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('auto_finish_expired_lessons: end_room failed')
+        finished += 1
+    return finished
 
 
 @transaction.atomic

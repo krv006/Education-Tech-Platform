@@ -12,4 +12,5 @@ urlpatterns = [
     path('submissions/<uuid:submission_id>/recheck/', views.RecheckView.as_view(), name='hw-recheck'),
     path('submissions/<uuid:submission_id>/review/', views.SubmissionReviewView.as_view(), name='hw-review'),
     path('assignments/<uuid:assignment_id>/focus/', views.AssignmentFocusView.as_view(), name='hw-focus'),
+    path('report/', views.ProgressReportView.as_view(), name='hw-report'),
 ]
