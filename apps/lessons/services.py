@@ -421,24 +421,37 @@ def recording_info(*, user: User, lesson: Lesson) -> dict:
     if recording is None:
         raise NotFound("Bu darsda video yozuv yo'q.")
 
+    from datetime import timedelta
+
     # Fayl diskka tushgan bo'lsa — tayyor deb belgilaymiz
     path = _recording_path(recording) if recording.file_name else None
     file_ready = bool(path and path.exists() and path.stat().st_size > 0)
     in_progress = recording.status in (
         LessonRecording.Status.PENDING, LessonRecording.Status.RECORDING,
+        LessonRecording.Status.MERGING,
     )
     if file_ready and in_progress and lesson.status == Lesson.Status.FINISHED:
         recording.status = LessonRecording.Status.COMPLETED
         recording.save(update_fields=['status', 'updated_at'])
+    elif (
+        in_progress and lesson.status == Lesson.Status.FINISHED and not file_ready
+        and recording.video_ready_at and not recording.audio_finalized_at
+        and timezone.now() - recording.video_ready_at > timedelta(minutes=2)
+    ):
+        # Video tayyor, lekin audio (brauzerdan) 2 daqiqadan beri kelmadi
+        # (masalan o'qituvchi brauzeri yopilib qoldi) — butun yozuvni
+        # yo'qotmaslik uchun FAQAT VIDEO bilan (ovozsiz) yakunlaymiz.
+        from apps.live import services as live_services
+        live_services.finalize_video_only(lesson.id)
+        recording.refresh_from_db()
+        path = _recording_path(recording) if recording.file_name else None
+        file_ready = bool(path and path.exists() and path.stat().st_size > 0)
     elif in_progress and lesson.status == Lesson.Status.FINISHED and not file_ready:
-        # Dars tugagan, fayl esa 3 daqiqadan beri yo'q — yozuv chiqmagan
-        # (masalan, xonada media bo'lmagan). Abadiy "yozilmoqda" qolib
-        # ketmasin — halol failed holatiga o'tkazamiz.
-        from datetime import timedelta
-
-        from django.utils import timezone as _tz
+        # Dars tugagan, video ham hali boshlanmagan/tayyor emas — yozuv
+        # chiqmagan (masalan, xonada media bo'lmagan). Abadiy "yozilmoqda"
+        # qolib ketmasin — halol failed holatiga o'tkazamiz.
         reference = recording.ended_at or recording.updated_at
-        if reference and _tz.now() - reference > timedelta(minutes=3):
+        if reference and timezone.now() - reference > timedelta(minutes=3):
             recording.status = LessonRecording.Status.FAILED
             recording.error = (
                 "Yozuv fayli yaratilmadi — darsda video/audio bo'lmagan "
@@ -486,7 +499,10 @@ def recording_stream_path(*, lesson: Lesson, token: str):
 
 
 def delete_recording(*, teacher: User, lesson: Lesson) -> None:
-    """Faqat kurs o'qituvchisi. Fayl ham, yozuv ham o'chadi."""
+    """Faqat kurs o'qituvchisi. Fayllar (yakuniy + xom video/audio) ham,
+    yozuv ham o'chadi."""
+    from django.conf import settings
+
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
@@ -494,11 +510,73 @@ def delete_recording(*, teacher: User, lesson: Lesson) -> None:
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None:
         raise NotFound("Yozuv yo'q.")
-    if recording.file_name:
-        path = _recording_path(recording)
+    for name in (recording.file_name, recording.video_file_name, recording.audio_file_name):
+        if not name:
+            continue
+        path = settings.RECORDINGS_DIR / name
         if path.exists():
             path.unlink()
     recording.delete()
+
+
+# ── Dars audio yozuvi — o'qituvchi brauzeridan chunked upload ──────────────
+# EduTech optimallashtirish (2026-08-27): video Track Egress bilan serverda
+# (arzon), audio esa o'qituvchi brauzerida Web Audio API orqali barcha
+# ishtirokchilar ovozi ichkarida aralashtirilib, bo'lak-bo'lak (30-60s)
+# yuboriladi — server audio uchun deyarli CPU sarflamaydi (faqat diskka
+# yozish). Ikkalasi tayyor bo'lgach `apps.live.services.maybe_start_merge`
+# fon jarayonida ffmpeg bilan birlashtiradi.
+
+AUDIO_CHUNK_MAX_MB = 10  # 30-60s audio uchun me'yordan ancha katta — xato/suiiste'moldan himoya
+
+
+def upload_recording_audio_chunk(*, teacher: User, lesson: Lesson, chunk, started_at: str | None = None) -> None:
+    """Brauzerdan kelgan audio bo'lagini yozuv fayliga qo'shib boradi.
+
+    Format brauzer tomonidan belgilanadi (masalan webm/opus) — server hech
+    narsani qayta kodlamaydi, faqat bo'laklarni ketma-ket qo'shadi
+    (MediaRecorder'ning bir xil sessiyadagi ondataavailable bo'laklari shu
+    tartibda qo'shilsa, yaroqli yagona oqim hosil bo'ladi)."""
+    from django.conf import settings
+    from django.utils.dateparse import parse_datetime
+
+    from .models import LessonRecording
+
+    if lesson.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi audio yuklashi mumkin.")
+    if chunk.size > AUDIO_CHUNK_MAX_MB * 1024 * 1024:
+        raise ValidationError({'chunk': f"Bo'lak {AUDIO_CHUNK_MAX_MB} MB dan katta."})
+
+    recording, _ = LessonRecording.objects.get_or_create(lesson=lesson)
+    if not recording.audio_file_name:
+        parsed = parse_datetime(started_at) if started_at else None
+        if parsed and timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.utc)
+        recording.audio_file_name = f'{lesson.room_name}-audio.webm'
+        recording.audio_started_at = parsed or timezone.now()
+        recording.save(update_fields=['audio_file_name', 'audio_started_at', 'updated_at'])
+
+    path = settings.RECORDINGS_DIR / recording.audio_file_name
+    with open(path, 'ab') as f:
+        for part in chunk.chunks():
+            f.write(part)
+
+
+def finalize_recording_audio(*, teacher: User, lesson: Lesson) -> None:
+    """O'qituvchi 'audio yozuv tugadi' deb belgilaydi — video ham tayyor
+    bo'lsa, fon jarayonida birlashtirish ishga tushadi."""
+    from apps.live import services as live_services
+
+    from .models import LessonRecording
+
+    if lesson.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi audio yozuvni yakunlashi mumkin.")
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None or not recording.audio_file_name:
+        raise ValidationError('Bu darsga audio yuklanmagan.')
+    recording.audio_finalized_at = timezone.now()
+    recording.save(update_fields=['audio_finalized_at', 'updated_at'])
+    live_services.maybe_start_merge(lesson.id)
 
 
 def publish_recording_message(lesson: Lesson, title: str) -> None:

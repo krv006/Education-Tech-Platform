@@ -4,6 +4,7 @@ from django.http import FileResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -232,6 +233,33 @@ class LessonViewSet(viewsets.ModelViewSet):
             services.delete_recording(teacher=request.user, lesson=lesson)
             return Response(status=204)
         return Response(services.recording_info(user=request.user, lesson=lesson))
+
+    @action(
+        detail=True, methods=['post'], url_path='recording/audio',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def recording_audio_chunk(self, request, pk=None):
+        """O'qituvchi brauzeridan audio bo'lagi (chunk) — dars davomida
+        ketma-ket, har 30-60 soniyada yuboriladi. Brauzer barcha
+        ishtirokchilar ovozini ichkarida (Web Audio API) aralashtirib
+        yuboradi — server faqat diskka yozadi, CPU sarflamaydi."""
+        lesson = self.get_object()
+        chunk = request.FILES.get('chunk')
+        if not chunk:
+            raise ValidationError({'chunk': "Fayl bo'lagi yuborilmadi."})
+        services.upload_recording_audio_chunk(
+            teacher=request.user, lesson=lesson, chunk=chunk,
+            started_at=request.data.get('started_at') or None,
+        )
+        return Response(status=204)
+
+    @action(detail=True, methods=['post'], url_path='recording/audio/finalize')
+    def recording_audio_finalize(self, request, pk=None):
+        """O'qituvchi audio yuklashni tugatdi — video ham tayyor bo'lsa,
+        fon jarayonida birlashtirish boshlanadi."""
+        lesson = self.get_object()
+        services.finalize_recording_audio(teacher=request.user, lesson=lesson)
+        return Response(status=204)
 
     @action(
         detail=True, methods=['get'], url_path='recording/stream',

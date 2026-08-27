@@ -145,15 +145,24 @@ class FocusAlert(TimeStampedUUIDModel):
 class LessonRecording(TimeStampedUUIDModel):
     """Dars video yozuvi (EduTech.docx: "video zapis avtomatik saqlansin").
 
-    LiveKit Egress dars LIVE bo'lganda yozishni boshlaydi, dars/xona
-    tugaganda faylga yakunlaydi. Fayl `recordings` volume'ida turadi va
-    FAQAT auth endpoint orqali beriladi. O'qituvchi guruhni (kursni)
-    o'chirmaguncha saqlanadi.
+    Ikki qismdan yig'iladi:
+      - VIDEO: LiveKit Track Egress o'qituvchi kamerasini xom (qayta
+        kodlashsiz) nusxa ko'chiradi -> `video_file_name`.
+      - AUDIO: o'qituvchi brauzeri barcha ishtirokchilar ovozini ichkarida
+        aralashtirib (Web Audio API), bo'lak-bo'lak (chunk) serverga
+        yuklaydi -> `audio_file_name` (server tomonda qo'shib boriladi).
+    Ikkalasi ham tayyor bo'lgach (`video_ready_at` va `audio_finalized_at`
+    ikkalasi bor), fon jarayonida `ffmpeg`da vaqt farqiga moslab (`-itsoffset`,
+    `video_started_at`/`audio_started_at` orqali hisoblanadi) bitta faylga
+    birlashtiriladi -> yakuniy `file_name`. Fayl `recordings` volume'ida
+    turadi va FAQAT auth endpoint orqali beriladi. O'qituvchi guruhni
+    (kursni) o'chirmaguncha saqlanadi.
     """
 
     class Status(TextChoices):
         PENDING = 'pending', 'Boshlanmoqda'       # so'rov yuborildi, egress hali tasdiqlamadi
         RECORDING = 'recording', 'Yozilmoqda'     # egress tasdiqladi (egress_id bor)
+        MERGING = 'merging', 'Birlashtirilmoqda'  # video+audio tayyor, ffmpeg ishlamoqda
         COMPLETED = 'completed', 'Tayyor'
         FAILED = 'failed', 'Xatolik'
 
@@ -161,10 +170,21 @@ class LessonRecording(TimeStampedUUIDModel):
     # O'qituvchi dars tugatishda beradigan nom — chatga shu nom bilan tushadi
     title = CharField(max_length=200, blank=True)
     egress_id = CharField(max_length=64, blank=True)
+    # Yakuniy (video+audio birlashtirilgan) fayl — faqat merge tugagach to'ladi
     file_name = CharField(max_length=255, blank=True)
     status = CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     error = TextField(blank=True)
     ended_at = DateTimeField(null=True, blank=True)
+
+    # ── Video (Track Egress) ──
+    video_file_name = CharField(max_length=255, blank=True)
+    video_started_at = DateTimeField(null=True, blank=True)
+    video_ready_at = DateTimeField(null=True, blank=True)  # egress to'xtatildi
+
+    # ── Audio (brauzer -> chunked upload) ──
+    audio_file_name = CharField(max_length=255, blank=True)
+    audio_started_at = DateTimeField(null=True, blank=True)  # brauzer yuborgan, birinchi chunk'da
+    audio_finalized_at = DateTimeField(null=True, blank=True)  # o'qituvchi "tugadi" deb belgiladi
 
     class Meta:
         ordering = ['-created_at']

@@ -697,6 +697,233 @@ class RecordingLifecycleTests(APITestCase):
         self.assertIn('texnik xato', _friendly_egress_error(Exception('boom')))
 
 
+class AudioChunkUploadTests(APITestCase):
+    """Brauzerdan chunked audio upload + video bilan birlashtirish
+    (2026-08-27 CPU optimallashtirish: RoomComposite audio_only o'rniga)."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson, LessonRecording
+
+        self.tmp = tempfile.mkdtemp()
+        self._override = override_settings(RECORDINGS_DIR=Path(self.tmp))
+        self._override.enable()
+        self.addCleanup(self._override.disable)
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('ac_t', User.Role.TEACHER)
+        self.student = mk('ac_s', User.Role.STUDENT)
+        self.course = Course.objects.create(teacher=self.teacher, title='AC')
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=Enrollment.Status.APPROVED,
+        )
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='Audio dars', starts_at=timezone.now(),
+            duration_min=45, status=Lesson.Status.LIVE,
+        )
+        self.LessonRecording = LessonRecording
+        self.SimpleUploadedFile = SimpleUploadedFile
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def test_only_teacher_can_upload_chunk(self):
+        chunk = self.SimpleUploadedFile('c.webm', b'\x00' * 100, content_type='audio/webm')
+        r = self.api(self.student).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': chunk}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_missing_chunk_is_rejected(self):
+        r = self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_oversized_chunk_is_rejected(self):
+        from . import services
+
+        big = self.SimpleUploadedFile('c.webm', b'\x00' * (services.AUDIO_CHUNK_MAX_MB * 1024 * 1024 + 1))
+        r = self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': big}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_chunks_append_in_order_and_started_at_set_once(self):
+        from pathlib import Path
+
+        c1 = self.SimpleUploadedFile('c.webm', b'AAAA', content_type='audio/webm')
+        r = self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/',
+            {'chunk': c1, 'started_at': '2026-08-27T10:00:00Z'}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 204)
+        recording = self.LessonRecording.objects.get(lesson=self.lesson)
+        self.assertTrue(recording.audio_file_name)
+        self.assertEqual(recording.audio_started_at.isoformat(), '2026-08-27T10:00:00+00:00')
+
+        c2 = self.SimpleUploadedFile('c.webm', b'BBBB', content_type='audio/webm')
+        r = self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/',
+            # ikkinchi chunk'da started_at yuborilsa ham — birinchisi saqlanadi
+            {'chunk': c2, 'started_at': '2099-01-01T00:00:00Z'}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 204)
+        recording.refresh_from_db()
+        self.assertEqual(recording.audio_started_at.isoformat(), '2026-08-27T10:00:00+00:00')
+        content = (Path(self.tmp) / recording.audio_file_name).read_bytes()
+        self.assertEqual(content, b'AAAABBBB')
+
+    def test_finalize_without_upload_fails(self):
+        r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
+        self.assertEqual(r.status_code, 400)
+
+    def test_finalize_before_video_ready_does_not_merge(self):
+        c1 = self.SimpleUploadedFile('c.webm', b'AAAA')
+        self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': c1}, format='multipart',
+        )
+        r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
+        self.assertEqual(r.status_code, 204)
+        recording = self.LessonRecording.objects.get(lesson=self.lesson)
+        self.assertIsNotNone(recording.audio_finalized_at)
+        self.assertEqual(recording.status, self.LessonRecording.Status.PENDING)
+
+    def test_finalize_after_video_ready_triggers_merge_thread(self):
+        from unittest.mock import patch
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.mp4', video_ready_at=timezone.now(),
+            status=self.LessonRecording.Status.RECORDING,
+        )
+        c1 = self.SimpleUploadedFile('c.webm', b'AAAA')
+        self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': c1}, format='multipart',
+        )
+        with patch('threading.Thread') as thread_cls:
+            r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
+        self.assertEqual(r.status_code, 204)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
+        thread_cls.assert_called_once()
+        args, kwargs = thread_cls.call_args
+        from apps.live import services as live_services
+        self.assertEqual(kwargs['target'], live_services._merge_recording)
+        self.assertEqual(kwargs['args'], (recording.pk,))
+
+    def test_maybe_start_merge_is_idempotent(self):
+        """Video va audio ikkalasi tayyor bo'lganda ikki marta chaqirilsa
+        ham (stop_recording HAM, finalize HAM chaqirishi mumkin) — faqat
+        BIR marta thread ishga tushadi."""
+        from unittest.mock import patch
+
+        from apps.live import services as live_services
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.mp4', video_ready_at=timezone.now(),
+            audio_file_name='audio.webm', audio_finalized_at=timezone.now(),
+            status=self.LessonRecording.Status.RECORDING,
+        )
+        with patch('threading.Thread') as thread_cls:
+            live_services.maybe_start_merge(self.lesson.id)
+            live_services.maybe_start_merge(self.lesson.id)
+        thread_cls.assert_called_once()
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
+
+    def test_merge_recording_success_with_offset(self):
+        """Haqiqiy ffmpeg bilan: video 0.5s audio'dan keyin boshlangan bo'lsa
+        ham, chiqish fayli video+audio bilan yaratiladi."""
+        from pathlib import Path
+
+        from apps.live.services import _merge_recording
+
+        video_path = Path(self.tmp) / 'video.mp4'
+        audio_path = Path(self.tmp) / 'audio.webm'
+        self._make_test_video(video_path)
+        self._make_test_audio(audio_path)
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.mp4', video_started_at=timezone.now(),
+            audio_file_name='audio.webm',
+            audio_started_at=timezone.now() - timedelta(seconds=1),
+            audio_finalized_at=timezone.now(),
+            status=self.LessonRecording.Status.MERGING,
+        )
+        _merge_recording(recording.pk)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
+        self.assertTrue(recording.file_name)
+        self.assertTrue((Path(self.tmp) / recording.file_name).exists())
+        self.assertGreater((Path(self.tmp) / recording.file_name).stat().st_size, 0)
+
+    def test_merge_recording_failure_marks_failed(self):
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='yoq-video.mp4', video_started_at=timezone.now(),
+            audio_file_name='yoq-audio.webm', audio_started_at=timezone.now(),
+            audio_finalized_at=timezone.now(),
+            status=self.LessonRecording.Status.MERGING,
+        )
+        from apps.live.services import _merge_recording
+        _merge_recording(recording.pk)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.FAILED)
+        self.assertIn('Birlashtirish xatosi', recording.error)
+
+    def test_finalize_video_only_fallback(self):
+        from pathlib import Path
+
+        from apps.live.services import finalize_video_only
+
+        video_path = Path(self.tmp) / 'video.mp4'
+        video_path.write_bytes(b'\x00' * 1024)
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.mp4', video_ready_at=timezone.now(),
+            status=self.LessonRecording.Status.RECORDING,
+        )
+        finalize_video_only(self.lesson.id)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
+        self.assertEqual(recording.file_name, 'video.mp4')
+
+    @staticmethod
+    def _make_test_video(path):
+        import subprocess
+        subprocess.run([
+            'ffmpeg', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=1',
+            '-c:v', 'libx264', '-t', '1', str(path),
+        ], capture_output=True, check=True)
+
+    @staticmethod
+    def _make_test_audio(path):
+        import subprocess
+        subprocess.run([
+            'ffmpeg', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+            '-c:a', 'libopus', str(path),
+        ], capture_output=True, check=True)
+
+
 class InviteBanTests(APITestCase):
     """Zoom uslubidagi dars moderatsiyasi: o'qituvchi taklif yuboradi va
     o'quvchini chetlashtiradi (ban qilingan qayta token ololmaydi)."""
