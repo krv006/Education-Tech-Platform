@@ -17,11 +17,29 @@ ishtirokchining audio `MediaStreamTrack`ini `AudioContext` +
 qilish kerak (ekran/tab-share, maxsus ruxsat SHART EMAS — bu ichki, sahifa
 darajasidagi mixing).
 
-### 2) Yozib olish (MediaRecorder)
+### 2) Yozib olish (MediaRecorder) — MUHIM: BITTA uzluksiz sessiya
 
-Shu aralashgan oqimni `MediaRecorder` bilan yozib olish (tavsiya:
-`audio/webm;codecs=opus`). `ondataavailable`ni har **30-60 soniyada**
-ishga tushirish (`recorder.start(30000)` yoki shunga o'xshash).
+Shu aralashgan oqimni **BITTA** `MediaRecorder` obyekti bilan yozib
+oling (tavsiya: `audio/webm;codecs=opus`), va uni **faqat bir marta**
+ishga tushiring — `recorder.start(30000)` (30000ms = har 30 soniyada
+`ondataavailable` o'zi bo'lak beradi):
+
+```js
+const recorder = new MediaRecorder(mixedStream, { mimeType: 'audio/webm;codecs=opus' });
+recorder.ondataavailable = (e) => uploadChunk(e.data);
+recorder.start(30000);  // BITTA marta chaqiriladi, dars oxirigacha
+```
+
+**QATTIQ TAQIQLANADI:** har bo'lak uchun **alohida-alohida**
+`new MediaRecorder(...).start()` + `.stop()` chaqirish (masalan har
+30 soniyada yangi recorder yaratib, eskisini to'xtatish). Bu yondashuv
+bo'laklar orasida kichik **vaqt bo'shliqlari** hosil qiladi — server bu
+bo'shliqni bila olmaydi, natijada video bilan audio orasidagi farq **dars
+davomida asta-sekin kattalashib boradi** (lablar bilan ovoz mos
+kelmaydigan bo'lib qoladi). Bu — aynan production'da 2026-08-28'da
+uchragan, tasdiqlangan xato: bitta `MediaRecorder` sessiyasining
+**ichidagi** `ondataavailable` bo'laklari esa bir xil uzluksiz oqimning
+qismlari bo'lgani uchun bunday muammo umuman bo'lmaydi.
 
 ### 3) Boshlanish vaqtini eslab qolish
 
@@ -67,7 +85,8 @@ boshlaydi), `400` (agar umuman audio yuklanmagan bo'lsa).
 - Yakuniy (birlashtirilgan) video+audio fayl `GET
   /api/v1/lessons/{id}/recording/` orqali odatdagidek olinadi — status
   `merging` bo'lsa hali tayyor emas, biroz kutib qayta so'rang (poll).
-- Fayl formati (webm/opus) frontend tanlovi bilan mos kelishi kerak —
-  agar boshqa format ishlatilsa (masalan mp4/aac), backend hozircha shuni
-  ham xom holda saqlaydi va `-c:a aac`ga aylantiradi, ko'pchilik format
-  ishlashi kerak, lekin **webm/opus tavsiya etiladi** (test qilingan).
+- Fayl formati **webm/opus BO'LISHI SHART** (`audio/webm;codecs=opus`) —
+  backend endi buni qayta kodlamasdan to'g'ridan-to'g'ri video bilan
+  bitta WebM faylga birlashtiradi (video ham VP8/WebM, brauzer kamerasi
+  shu formatda kodlagani uchun — MP4 konteyner VP8'ni umuman qo'llab-
+  quvvatlamaydi, shu sabab boshqa format ishlamaydi).
