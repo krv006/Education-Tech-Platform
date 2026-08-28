@@ -803,7 +803,15 @@ def _merge_recording(recording_pk) -> None:
     """Video+audio fayllarini vaqt farqiga moslab (`-itsoffset`) bitta faylga
     birlashtiradi. Video qayta kodlanmaydi (`-c copy`), faqat audio AAC'ga
     o'tkaziladi (MP4 konteyner mosligi uchun — bu arzon, video kabi og'ir
-    emas)."""
+    emas).
+
+    `-fflags +genpts` audio kirishida SHART — brauzer audio faylini
+    bo'lak-bo'lak (bir nechta alohida MediaRecorder seansi) yozib
+    yuborganda, har seans o'z vaqtini noldan boshlashi mumkin va bu
+    ulanish nuqtalarida vaqt belgisi orqaga qaytib qoladi (production'da
+    2026-08-28: "non monotonically increasing dts" bilan `-c:a aac`
+    QATTIQ xato berib, chiqish fayli umuman yaratilmagan edi — `+genpts`
+    buni silliq tuzatib, faylni saqlab qoladi)."""
     import logging
     import subprocess
     import uuid as _uuid
@@ -829,6 +837,7 @@ def _merge_recording(recording_pk) -> None:
         cmd = [
             'ffmpeg', '-y',
             '-itsoffset', f'{video_offset:.3f}', '-i', str(video_path),
+            '-fflags', '+genpts',
             '-itsoffset', f'{audio_offset:.3f}', '-i', str(audio_path),
             '-map', '0:v:0', '-map', '1:a:0',
             '-c:v', 'copy', '-c:a', 'aac',

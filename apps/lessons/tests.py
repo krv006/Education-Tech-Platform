@@ -876,6 +876,45 @@ class AudioChunkUploadTests(APITestCase):
         self.assertTrue((Path(self.tmp) / recording.file_name).exists())
         self.assertGreater((Path(self.tmp) / recording.file_name).stat().st_size, 0)
 
+    def test_merge_recording_survives_concatenated_audio_segments(self):
+        """Production'da topilgan xato (2026-08-28): brauzer audio faylini
+        bir nechta ALOHIDA yozib olish seansidan (har biri o'z vaqtini
+        noldan boshlaydigan) qo'shib yuborsa, ulanish nuqtasida vaqt
+        belgisi orqaga qaytadi ("non monotonically increasing dts") va
+        `-c:a aac` buni QATTIQ xato deb hisoblab, chiqish faylini umuman
+        yaratmay qo'yadi. `-fflags +genpts` buni silliqlab, birlashtirish
+        baribir muvaffaqiyatli tugashini ta'minlashi kerak."""
+        from pathlib import Path
+
+        from apps.live.services import _merge_recording
+
+        video_path = Path(self.tmp) / 'video.mp4'
+        self._make_test_video(video_path)
+
+        # Ikkita ALOHIDA audio segment (har biri o'z sarlavhasi/vaqti
+        # bilan) — xom baytlarda ulab, "ko'p seansli chunked upload"ni
+        # taqlid qilamiz.
+        seg1 = Path(self.tmp) / 'seg1.webm'
+        seg2 = Path(self.tmp) / 'seg2.webm'
+        self._make_test_audio(seg1)
+        self._make_test_audio(seg2)
+        audio_path = Path(self.tmp) / 'audio.webm'
+        audio_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.mp4', video_started_at=timezone.now(),
+            audio_file_name='audio.webm',
+            audio_started_at=timezone.now() - timedelta(seconds=1),
+            audio_finalized_at=timezone.now(),
+            status=self.LessonRecording.Status.MERGING,
+        )
+        _merge_recording(recording.pk)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED, recording.error)
+        self.assertTrue((Path(self.tmp) / recording.file_name).exists())
+        self.assertGreater((Path(self.tmp) / recording.file_name).stat().st_size, 0)
+
     def test_merge_recording_failure_marks_failed(self):
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
