@@ -299,11 +299,19 @@ class _FileSlice:
         self._f.close()
 
 
+_VIDEO_CONTENT_TYPES = {'.mp4': 'video/mp4', '.webm': 'video/webm'}
+
+
 def _ranged_video_response(request, path):
-    """MP4 ni HTTP Range bilan beradi — pleer o'tkazib ko'ra oladi (seek).
-    inline: brauzer "saqlash" emas, pleerda ochadi."""
+    """Videoni HTTP Range bilan beradi — pleer o'tkazib ko'ra oladi (seek).
+    inline: brauzer "saqlash" emas, pleerda ochadi.
+
+    Content-Type fayl kengaytmasiga qarab tanlanadi — Track Egress+ffmpeg
+    birlashtirish endi `.webm` (VP8+Opus, qayta kodlashsiz) chiqaradi,
+    eski/fallback yozuvlar `.mp4` bo'lishi ham mumkin."""
     import re
 
+    content_type = _VIDEO_CONTENT_TYPES.get(path.suffix.lower(), 'video/mp4')
     size = path.stat().st_size
     range_header = request.META.get('HTTP_RANGE', '')
     match = re.match(r'bytes=(\d+)-(\d*)', range_header)
@@ -314,11 +322,11 @@ def _ranged_video_response(request, path):
         length = end - start + 1
         f = open(path, 'rb')
         f.seek(start)
-        response = FileResponse(_FileSlice(f, length), status=206, content_type='video/mp4')
+        response = FileResponse(_FileSlice(f, length), status=206, content_type=content_type)
         response['Content-Range'] = f'bytes {start}-{end}/{size}'
         response['Content-Length'] = str(length)
     else:
-        response = FileResponse(open(path, 'rb'), content_type='video/mp4')
+        response = FileResponse(open(path, 'rb'), content_type=content_type)
         response['Content-Length'] = str(size)
     response['Accept-Ranges'] = 'bytes'
     response['Content-Disposition'] = 'inline'

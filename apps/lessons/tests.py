@@ -856,14 +856,14 @@ class AudioChunkUploadTests(APITestCase):
 
         from apps.live.services import _merge_recording
 
-        video_path = Path(self.tmp) / 'video.mp4'
+        video_path = Path(self.tmp) / 'video.webm'
         audio_path = Path(self.tmp) / 'audio.webm'
         self._make_test_video(video_path)
         self._make_test_audio(audio_path)
 
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
-            video_file_name='video.mp4', video_started_at=timezone.now(),
+            video_file_name='video.webm', video_started_at=timezone.now(),
             audio_file_name='audio.webm',
             audio_started_at=timezone.now() - timedelta(seconds=1),
             audio_finalized_at=timezone.now(),
@@ -871,7 +871,7 @@ class AudioChunkUploadTests(APITestCase):
         )
         _merge_recording(recording.pk)
         recording.refresh_from_db()
-        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED, recording.error)
         self.assertTrue(recording.file_name)
         self.assertTrue((Path(self.tmp) / recording.file_name).exists())
         self.assertGreater((Path(self.tmp) / recording.file_name).stat().st_size, 0)
@@ -888,7 +888,7 @@ class AudioChunkUploadTests(APITestCase):
 
         from apps.live.services import _merge_recording
 
-        video_path = Path(self.tmp) / 'video.mp4'
+        video_path = Path(self.tmp) / 'video.webm'
         self._make_test_video(video_path)
 
         # Ikkita ALOHIDA audio segment (har biri o'z sarlavhasi/vaqti
@@ -903,7 +903,7 @@ class AudioChunkUploadTests(APITestCase):
 
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
-            video_file_name='video.mp4', video_started_at=timezone.now(),
+            video_file_name='video.webm', video_started_at=timezone.now(),
             audio_file_name='audio.webm',
             audio_started_at=timezone.now() - timedelta(seconds=1),
             audio_finalized_at=timezone.now(),
@@ -928,6 +928,66 @@ class AudioChunkUploadTests(APITestCase):
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.FAILED)
         self.assertIn('Birlashtirish xatosi', recording.error)
+
+    def test_egress_start_prefers_screen_share_over_camera(self):
+        """O'qituvchi kamera VA ekran ulashishni bir vaqtda yoqqan bo'lsa,
+        yozuv ekran ulashish trackini olishi kerak (kontent ko'rsatish
+        kamera ko'rinishidan muhimroq) — kameradan foydalanish faqat
+        ekran ulashish yo'q bo'lgandagina."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, TrackInfo, TrackSource, TrackType
+        from livekit.protocol.room import ListParticipantsResponse
+
+        from apps.live.services import _egress_start
+
+        teacher_identity = 'user-abc'
+        participants = ListParticipantsResponse(participants=[
+            ParticipantInfo(identity=teacher_identity, tracks=[
+                TrackInfo(sid='TR_camera', type=TrackType.VIDEO, source=TrackSource.CAMERA),
+                TrackInfo(sid='TR_screen', type=TrackType.VIDEO, source=TrackSource.SCREEN_SHARE),
+                TrackInfo(sid='TR_mic', type=TrackType.AUDIO, source=TrackSource.MICROPHONE),
+            ]),
+        ])
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.list_participants = AsyncMock(return_value=participants)
+            mock_client.egress.start_track_egress = AsyncMock(
+                return_value=type('Info', (), {'egress_id': 'EG_x'})(),
+            )
+            mock_client.aclose = AsyncMock()
+            asyncio.run(_egress_start('room-1', 'out.webm', teacher_identity))
+
+        sent = mock_client.egress.start_track_egress.call_args.args[0]
+        self.assertEqual(sent.track_id, 'TR_screen')
+
+    def test_egress_start_falls_back_to_camera_without_screen_share(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, TrackInfo, TrackSource, TrackType
+        from livekit.protocol.room import ListParticipantsResponse
+
+        from apps.live.services import _egress_start
+
+        teacher_identity = 'user-abc'
+        participants = ListParticipantsResponse(participants=[
+            ParticipantInfo(identity=teacher_identity, tracks=[
+                TrackInfo(sid='TR_camera', type=TrackType.VIDEO, source=TrackSource.CAMERA),
+            ]),
+        ])
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.list_participants = AsyncMock(return_value=participants)
+            mock_client.egress.start_track_egress = AsyncMock(
+                return_value=type('Info', (), {'egress_id': 'EG_x'})(),
+            )
+            mock_client.aclose = AsyncMock()
+            asyncio.run(_egress_start('room-1', 'out.webm', teacher_identity))
+
+        sent = mock_client.egress.start_track_egress.call_args.args[0]
+        self.assertEqual(sent.track_id, 'TR_camera')
 
     def test_finalize_video_only_fallback(self):
         from pathlib import Path
@@ -977,9 +1037,13 @@ class AudioChunkUploadTests(APITestCase):
     @staticmethod
     def _make_test_video(path):
         import subprocess
+        # libvpx (VP8) + webm — brauzer kamerasi haqiqatda shu kodeklarni
+        # yuboradi (Track Egress xom nusxa ko'chirgani uchun). libx264/mp4
+        # bilan test qilish production'dagi "VP8 MP4'ga sig'maydi" xatosini
+        # yashirib qo'yardi (2026-08-28 real incident).
         subprocess.run([
             'ffmpeg', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=1',
-            '-c:v', 'libx264', '-t', '1', str(path),
+            '-c:v', 'libvpx', '-t', '1', str(path),
         ], capture_output=True, check=True)
 
     @staticmethod

@@ -631,9 +631,18 @@ async def _egress_active(room_name: str) -> str | None:
 
 
 async def _egress_start(room_name: str, file_name: str, teacher_identity: str) -> str:
-    """O'qituvchining kamera trackini XOM nusxa ko'chiradi (qayta kodlashsiz —
+    """O'qituvchining video trackini XOM nusxa ko'chiradi (qayta kodlashsiz —
     Chrome render yo'q, CPU narxi RoomComposite'ga nisbatan ~7-10x arzon).
-    Audio endi bu yerda yo'q — brauzerdan alohida yuklanadi (yuqoridagi izoh)."""
+    Audio endi bu yerda yo'q — brauzerdan alohida yuklanadi (yuqoridagi izoh).
+
+    Ekran ulashish (SCREEN_SHARE) kamera (CAMERA)dan USTUN — o'qituvchi
+    darsni boshlaganda ekran ulashgan bo'lsa, aynan o'sha oqim yoziladi
+    (kontent kamera ko'rinishidan muhimroq). Diqqat: Track Egress BITTA
+    trackka "yopishib" oladi — agar o'qituvchi yozuv boshlangandan KEYIN
+    ekran ulashishni yoqsa/o'chirsa, joriy yozuv o'sha o'zgarishga
+    avtomatik moslashmaydi (bu — kelajakda alohida ko'rib chiqilishi
+    kerak bo'lgan cheklov, webhook-asosidagi track-almashtirishni
+    talab qiladi)."""
     from livekit.protocol.egress import DirectFileOutput, TrackEgressRequest
     from livekit.protocol.models import TrackType
     from livekit.protocol.room import ListParticipantsRequest
@@ -645,16 +654,22 @@ async def _egress_start(room_name: str, file_name: str, teacher_identity: str) -
     )
     try:
         result = await client.room.list_participants(ListParticipantsRequest(room=room_name))
-        track_id = None
+        camera_track_id = None
+        screen_track_id = None
         for p in result.participants:
             if p.identity != teacher_identity:
                 continue
             for t in p.tracks:
-                if t.type == TrackType.VIDEO and t.source == TrackSource.CAMERA:
-                    track_id = t.sid
+                if t.type != TrackType.VIDEO:
+                    continue
+                if t.source == TrackSource.SCREEN_SHARE:
+                    screen_track_id = t.sid
+                elif t.source == TrackSource.CAMERA:
+                    camera_track_id = t.sid
+        track_id = screen_track_id or camera_track_id
         if not track_id:
             # start_recording'dagi kutish tsikli aynan shu matnni kutadi
-            raise RuntimeError('room does not exist — teacher camera track not published yet')
+            raise RuntimeError('room does not exist — teacher video track not published yet')
         info = await client.egress.start_track_egress(TrackEgressRequest(
             room_name=room_name, track_id=track_id,
             file=DirectFileOutput(filepath=f'{settings.EGRESS_OUTPUT_PREFIX}/{file_name}'),
@@ -800,18 +815,19 @@ def finalize_video_only(lesson_id) -> None:
 
 
 def _merge_recording(recording_pk) -> None:
-    """Video+audio fayllarini vaqt farqiga moslab (`-itsoffset`) bitta faylga
-    birlashtiradi. Video qayta kodlanmaydi (`-c copy`), faqat audio AAC'ga
-    o'tkaziladi (MP4 konteyner mosligi uchun — bu arzon, video kabi og'ir
-    emas).
+    """Video+audio fayllarini vaqt farqiga moslab (`-itsoffset`) bitta
+    WebM faylga birlashtiradi. Ikkalasi ham qayta kodlanmaydi (`-c copy`)
+    — brauzer kamerasi VP8/VP9, mikrofon-mix esa Opus kodlaydi, ikkalasi
+    ham WebM konteynerida TABIIY qo'llab-quvvatlanadi (production'da
+    topilgan xato: MP4 konteynerga VP8'ni yozib bo'lmaydi — "codec not
+    currently supported in container", chiqish fayli umuman
+    yaratilmagan edi).
 
-    `-fflags +genpts` audio kirishida SHART — brauzer audio faylini
-    bo'lak-bo'lak (bir nechta alohida MediaRecorder seansi) yozib
+    `-fflags +genpts` audio kirishida qo'shimcha himoya — brauzer audio
+    faylini bo'lak-bo'lak (bir nechta alohida MediaRecorder seansi) yozib
     yuborganda, har seans o'z vaqtini noldan boshlashi mumkin va bu
-    ulanish nuqtalarida vaqt belgisi orqaga qaytib qoladi (production'da
-    2026-08-28: "non monotonically increasing dts" bilan `-c:a aac`
-    QATTIQ xato berib, chiqish fayli umuman yaratilmagan edi — `+genpts`
-    buni silliq tuzatib, faylni saqlab qoladi)."""
+    ulanish nuqtalarida vaqt belgisi orqaga qaytib qoladi; bu bayroq
+    buni silliqlab, muxer ogohlantirish bilan davom etishini ta'minlaydi."""
     import logging
     import subprocess
     import uuid as _uuid
@@ -824,7 +840,14 @@ def _merge_recording(recording_pk) -> None:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
         video_path = settings.RECORDINGS_DIR / (_resolve_video_file(recording) or recording.video_file_name)
         audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
-        output_name = f'{recording.lesson.room_name}-{_uuid.uuid4().hex[:6]}-final.mp4'
+        # .webm, .mp4 EMAS — brauzer kamerasi VP8 (yoki VP9) kodlaydi, va
+        # VP8/VP9 MP4 konteynerida UMUMAN qo'llab-quvvatlanmaydi
+        # (production'da topilgan xato: "Could not find tag for codec vp8
+        # in stream, codec not currently supported in container" — chiqish
+        # fayli butunlay yaratilmay qolgan edi). WebM VP8/VP9 + Opus'ni
+        # ikkalasini ham TABIIY qo'llab-quvvatlaydi — audio uchun ham AAC'ga
+        # aylantirish endi shart emas, to'g'ridan-to'g'ri nusxalanadi.
+        output_name = f'{recording.lesson.room_name}-{_uuid.uuid4().hex[:6]}-final.webm'
         output_path = settings.RECORDINGS_DIR / output_name
 
         if recording.video_started_at and recording.audio_started_at:
@@ -840,7 +863,7 @@ def _merge_recording(recording_pk) -> None:
             '-fflags', '+genpts',
             '-itsoffset', f'{audio_offset:.3f}', '-i', str(audio_path),
             '-map', '0:v:0', '-map', '1:a:0',
-            '-c:v', 'copy', '-c:a', 'aac',
+            '-c:v', 'copy', '-c:a', 'copy',
             '-shortest', str(output_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
