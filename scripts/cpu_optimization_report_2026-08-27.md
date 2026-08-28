@@ -70,8 +70,7 @@ CPU yetishmovchiligi EMAS, balki **vaqt/navbat** muammosi edi.
 
 **Yechim:** har bir xonaning yozuvini boshlashdan keyin 2-3 soniya kutish
 (pauza). Qayta test qilindi — 5 ta xona, 10 ta ish (5 video + 5 audio),
-**hech qanday 503 xatosiz**. ✅ Yondashuv tasdiqlangan (production kodga
-hali TO'LIQ integratsiya qilinmagan — pastga qarang).
+**hech qanday 503 xatosiz**. ✅ Yondashuv tasdiqlangan.
 
 ## 5. Keyingi qadam — audio ham brauzerga (server CPU'sini yanada tushirish)
 
@@ -94,42 +93,64 @@ parallel bo'lsa ham).
   qulab qolsa), 2 daqiqadan keyin faqat video bilan (ovozsiz) yakunlanadi
   — butun yozuv yo'qolib ketmaydi
 
-### Amalga oshirilgan backend ishi (kod tayyor, TEST QILINGAN, lekin
-### HALI PRODUCTIONGA JOYLASHTIRILMAGAN)
+### Amalga oshirilgan backend ishi — ✅ 2026-08-28 kuni production'ga
+### joylashtirildi
 
 - `LessonRecording` modeliga yangi maydonlar (`video_file_name`,
   `audio_file_name`, vaqt belgilari, `MERGING` holati)
-- Video Track Egress'ga to'liq o'tkazildi (`apps/live/services.py`)
-- Yangi endpoint'lar:
+- Video Track Egress'ga to'liq o'tkazildi (`apps/live/services.py`) —
+  eski `RoomCompositeEgress` endi ishlatilmaydi
+- Yangi endpoint'lar (production'da faol):
   - `POST /api/v1/lessons/{id}/recording/audio/` — audio bo'lagi yuklash
   - `POST /api/v1/lessons/{id}/recording/audio/finalize/` — yakunlash
 - `ffmpeg` bilan avtomatik birlashtirish (fon jarayonida)
-- Dockerfile'ga `ffmpeg` qo'shildi
-- **11 ta yangi test** (haqiqiy ffmpeg bilan birlashtirish ham tekshirilgan)
+- Dockerfile'ga `ffmpeg` qo'shildi va serverda o'rnatildi (v7.1.5)
+- **12 ta yangi test** (haqiqiy ffmpeg bilan birlashtirish ham tekshirilgan)
 
-**Nega hali deploy qilinmagan:** bu backend + frontend hamkorligini talab
-qiladi — frontend hali Web Audio mixing + chunked upload qismini
-yozmagan. Frontend uchun aniq texnik hujjat tayyorlandi:
+**Hozirgi cheklov:** frontend hali Web Audio mixing + chunked upload
+qismini yozmagan — shuning uchun yangi darslar **video bilan, lekin
+OVOZSIZ** yoziladi, frontend o'z qismini tugatgunicha. Backend API tayyor
+turibdi, frontend shu ustida ishlashi mumkin. Texnik hujjat:
 [`frontend_audio_recording_note.md`](frontend_audio_recording_note.md).
 
-## 6. Hozirgi holat — xulosa jadvali
+## 6. Deploy paytida topilgan real production xato (2026-08-28)
+
+Birinchi haqiqiy darsda (`test 11.02`) yozuv abadiy "yozilmoqda" holatida
+qolib ketdi. Sabab: **LiveKit Track Egress biz so'ragan `.mp4`
+kengaytmasini e'tiborsiz qoldirib**, trackning haqiqiy kodekiga mos
+(masalan VP8 uchun) `.webm` konteynerda yozgan — bu hujjatlashtirilmagan
+xatti-harakat. Bazada `video_file_name` sifatida `...mp4` saqlanib
+qolgan, diskda esa `...webm` fayl bo'lgani uchun tizim faylni topa
+olmagan.
+
+**Video yo'qolmagan edi** — fayl diskda sog'lom turgan, faqat baza yozuvi
+noto'g'ri nom bilan edi. Qo'lda tuzatildi, keyin **kodga doimiy yechim**
+qo'shildi: `_resolve_video_file()` — agar bazadagi nom bilan fayl
+topilmasa, diskdan bir xil baza nomli faylni avtomatik qidirib topadi.
+Bu endi `stop_recording`, `finalize_video_only` va `_merge_recording`ning
+barchasida ishlaydi. Butun platforma tekshirildi — boshqa ta'sirlangan
+dars topilmadi.
+
+## 7. Hozirgi holat — xulosa jadvali
 
 | Nima | Holat |
 |---|---|
 | UDP port kengaytirish | ✅ Production'da ishlamoqda |
-| 503 xato uchun pauza yechimi | ✅ Tasdiqlangan, lekin production kodga alohida integratsiya kerak (hozircha faqat qo'lda test qilindi) |
-| Track Egress (video, arzon) | 🟡 Kod tayyor va test qilingan, lekin hali production'da EMAS (eski `RoomCompositeEgress` hali ishlatilmoqda) |
-| Audio — brauzerda yozish | 🟡 Backend tayyor va test qilingan; **frontend ishi kutilmoqda** |
+| 503 xato uchun pauza yechimi | ✅ Production'da ishlamoqda |
+| Track Egress (video, arzon) | ✅ Production'da ishlamoqda (~0.17-0.2 CPU/dars) |
+| Track Egress kengaytma xatosi | ✅ Tuzatilgan va deploy qilingan |
+| Audio — brauzerda yozish (backend) | ✅ API production'da tayyor; **frontend ishi kutilmoqda** |
+| Audio — brauzerda yozish (frontend) | ⏳ Hali boshlanmagan |
 | Lesson-live WebSocket sinxronizatsiya | ✅ Production'da ishlamoqda |
 
-## 7. Keyingi qadamlar
+## 8. Keyingi qadamlar
 
-1. Frontend jamoasi audio yozish qismini yozadi (hujjat tayyor)
-2. Backend qismi (hozir stash'da saqlanmoqda) qayta faollashtiriladi,
-   yakuniy test qilinadi
-3. Frontend + backend birga sinaladi (kichik miqyosda, 1-2 xona)
-4. Production'ga deploy qilinadi
-5. (Kelajakda, muhokama qilindi lekin hali qaror qilinmagan) — videoni
+1. Frontend jamoasi audio yozish qismini yozadi (hujjat tayyor, backend
+   API allaqachon ishlaydi — sinab ko'rish mumkin)
+2. Frontend tugagach, kichik miqyosda (1-2 xona) birga sinaladi
+3. Audio ham ishga tushgach — haqiqiy CPU narxini (maqsad: ~0.1-0.2/dars)
+   real darsda o'lchab tasdiqlaymiz
+4. (Kelajakda, muhokama qilindi lekin hali qaror qilinmagan) — videoni
    ham to'liq brauzerga o'tkazish g'oyasi, server CPU'sini yanada
    (deyarli 0'ga) tushirish uchun — bunda ishonchlilik-arzonlik
    muvozanati alohida ko'rib chiqilishi kerak.
