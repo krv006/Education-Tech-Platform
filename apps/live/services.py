@@ -664,6 +664,24 @@ async def _egress_start(room_name: str, file_name: str, teacher_identity: str) -
         await client.aclose()
 
 
+def _resolve_video_file(recording) -> str | None:
+    """LiveKit Track Egress biz so'ragan kengaytmani (masalan `.mp4`)
+    e'tiborsiz qoldirib, trackning HAQIQIY kodekiga mos konteynerda
+    (masalan VP8 uchun `.webm`) yozishi mumkin — bu hujjatlashtirilmagan,
+    lekin kuzatilgan xatti-harakat (2026-08-28: production'da topilgan
+    xato — bazada `.mp4` yozilgan, diskda `.webm` fayl bor edi, shu sabab
+    yozuv "recording" holatida abadiy qolib qolgan). Shuning uchun
+    kengaytmaga ishonmasdan, diskdan bir xil BAZA nomli faylni qidiramiz."""
+    if not recording.video_file_name:
+        return None
+    path = settings.RECORDINGS_DIR / recording.video_file_name
+    if path.exists():
+        return recording.video_file_name
+    base = recording.video_file_name.rsplit('.', 1)[0]
+    matches = sorted(settings.RECORDINGS_DIR.glob(f'{base}.*'))
+    return matches[0].name if len(matches) == 1 else None
+
+
 def stop_recording(*, lesson: Lesson) -> None:
     """Darsni yakunlashda video egress'ni to'xtatadi (best-effort — xona
     bo'shasa egress baribir o'zi yakunlaydi), so'ng audio ham tayyor bo'lsa
@@ -693,9 +711,12 @@ def stop_recording(*, lesson: Lesson) -> None:
         asyncio.run(_stop())
     except Exception as exc:  # allaqachon tugagan bo'lishi mumkin
         logging.getLogger('apps').info('egress stop: %s', exc)
+    resolved = _resolve_video_file(recording)
+    if resolved:
+        recording.video_file_name = resolved
     recording.ended_at = timezone.now()
     recording.video_ready_at = timezone.now()
-    recording.save(update_fields=['ended_at', 'video_ready_at', 'updated_at'])
+    recording.save(update_fields=['ended_at', 'video_ready_at', 'video_file_name', 'updated_at'])
     maybe_start_merge(lesson.id)
 
 
@@ -765,12 +786,15 @@ def finalize_video_only(lesson_id) -> None:
     recording = LessonRecording.objects.filter(lesson_id=lesson_id).first()
     if recording is None or not recording.video_file_name:
         return
-    path = settings.RECORDINGS_DIR / recording.video_file_name
-    if not path.exists():
+    resolved = _resolve_video_file(recording)
+    if not resolved:
         return
     updated = LessonRecording.objects.filter(
         pk=recording.pk, status=LessonRecording.Status.RECORDING,
-    ).update(file_name=recording.video_file_name, status=LessonRecording.Status.COMPLETED)
+    ).update(
+        file_name=resolved, video_file_name=resolved,
+        status=LessonRecording.Status.COMPLETED,
+    )
     if updated:
         logging.getLogger('apps').info('recording %s finalized video-only (no audio)', recording.pk)
 
@@ -790,7 +814,7 @@ def _merge_recording(recording_pk) -> None:
 
     try:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
-        video_path = settings.RECORDINGS_DIR / recording.video_file_name
+        video_path = settings.RECORDINGS_DIR / (_resolve_video_file(recording) or recording.video_file_name)
         audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
         output_name = f'{recording.lesson.room_name}-{_uuid.uuid4().hex[:6]}-final.mp4'
         output_path = settings.RECORDINGS_DIR / output_name

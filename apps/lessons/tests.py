@@ -907,6 +907,34 @@ class AudioChunkUploadTests(APITestCase):
         self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
         self.assertEqual(recording.file_name, 'video.mp4')
 
+    def test_stop_recording_resolves_actual_extension_livekit_wrote(self):
+        """Production'da topilgan xato (2026-08-28): Track Egress'ga `.mp4`
+        so'ralgan bo'lsa ham, LiveKit trackning haqiqiy kodekiga mos
+        `.webm` fayl yozgan — bazada nomuvofiq kengaytma qolib, yozuv
+        abadiy 'recording' holatida qolib qolgan edi. `stop_recording`
+        endi diskdagi haqiqiy faylni topib, nomni tuzatishi kerak."""
+        from pathlib import Path
+        from unittest.mock import AsyncMock, patch
+
+        from apps.live.services import stop_recording
+
+        # Egress '.mp4' so'ralgan, lekin haqiqatda '.webm' yozgan
+        (Path(self.tmp) / 'lesson-abc123-x1.webm').write_bytes(b'\x00' * 2048)
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='lesson-abc123-x1.mp4',
+            status=self.LessonRecording.Status.RECORDING,
+        )
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.egress.stop_egress = AsyncMock()
+            mock_client.aclose = AsyncMock()
+            stop_recording(lesson=self.lesson)
+
+        recording.refresh_from_db()
+        self.assertEqual(recording.video_file_name, 'lesson-abc123-x1.webm')
+        self.assertIsNotNone(recording.video_ready_at)
+
     @staticmethod
     def _make_test_video(path):
         import subprocess
