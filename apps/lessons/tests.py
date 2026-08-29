@@ -466,16 +466,38 @@ class RecordingTests(APITestCase):
         c.force_authenticate(user)
         return c
 
-    def test_finish_names_recording_and_posts_to_chat(self):
+    def test_finish_saves_title_without_posting_yet(self):
+        """finish_lesson endi darhol chatga e'lon qilmaydi — brauzer video/
+        audio yuklashni finish tugmasidan KEYIN ham davom ettirishi mumkin
+        (asinxron chunked upload). Faqat nomni saqlab qo'yadi."""
         from apps.chat.models import Message
 
         from . import services as lesson_services
+        before = Message.objects.count()
         lesson_services.finish_lesson(
             teacher=self.teacher, lesson=self.lesson,
             recording_title='Kvadrat tenglamalar (video)',
         )
         self.recording.refresh_from_db()
         self.assertEqual(self.recording.title, 'Kvadrat tenglamalar (video)')
+        self.assertIsNotNone(self.recording.ended_at)
+        self.assertEqual(Message.objects.count(), before)
+
+    def test_announce_recording_ready_posts_saved_title_to_chat(self):
+        """Yozuv (birlashtirish/finalize) haqiqatan tayyor bo'lganda —
+        finish_lesson orqali saqlangan nom bilan guruh chatga e'lon
+        qilinadi."""
+        from apps.chat.models import Message
+
+        from . import services as lesson_services
+        from apps.live.services import _announce_recording_ready
+
+        lesson_services.finish_lesson(
+            teacher=self.teacher, lesson=self.lesson,
+            recording_title='Kvadrat tenglamalar (video)',
+        )
+        self.recording.refresh_from_db()
+        _announce_recording_ready(self.recording)
         msg = Message.objects.filter(text__contains='/recordings/').latest('created_at')
         self.assertIn('Kvadrat tenglamalar (video)', msg.text)
         self.assertIn(str(self.lesson.id), msg.text)
@@ -645,22 +667,6 @@ class RecordingLifecycleTests(APITestCase):
             duration_min=45, status=Lesson.Status.LIVE,
         )
 
-    def test_no_chat_message_when_egress_never_started(self):
-        """Egress boshlanmagan (egress_id yo'q) — chatga yolg'on e'lon tushmaydi."""
-        from apps.chat.models import Message
-
-        from . import services as lesson_services
-        from .models import LessonRecording
-
-        LessonRecording.objects.create(lesson=self.lesson)  # pending, egresssiz
-        before = Message.objects.count()
-        lesson_services.finish_lesson(
-            teacher=self.teacher, lesson=self.lesson, recording_title='X',
-        )
-        recording_msgs = Message.objects.filter(text__contains='/recordings/').count()
-        self.assertEqual(Message.objects.count() - before, 0)
-        self.assertEqual(recording_msgs, 0)
-
     def test_stale_pending_marked_failed_on_info(self):
         """Dars tugagan, fayl 3+ daqiqa yo'q — info so'ralganda halol failed."""
         from datetime import timedelta
@@ -685,21 +691,11 @@ class RecordingLifecycleTests(APITestCase):
         self.assertEqual(r.data['status'], 'failed')
         self.assertIn('yaratilmadi', r.data['error'])
 
-    def test_friendly_error_mapping(self):
-        from apps.live.services import _friendly_egress_error
-
-        self.assertIn('hech kim ulanmadi', _friendly_egress_error(
-            Exception('twirp error not_found: requested room does not exist')))
-        self.assertIn('avtorizatsiya', _friendly_egress_error(
-            Exception('ServerError(code=unknown, message=, status=401)')))
-        self.assertIn("video/audio bo'lmadi", _friendly_egress_error(
-            Exception('Start signal not received')))
-        self.assertIn('texnik xato', _friendly_egress_error(Exception('boom')))
-
 
 class AudioChunkUploadTests(APITestCase):
-    """Brauzerdan chunked audio upload + video bilan birlashtirish
-    (2026-08-27 CPU optimallashtirish: RoomComposite audio_only o'rniga)."""
+    """Brauzerdan chunked video+audio upload va ularni birlashtirish
+    (2026-08-27/28 CPU optimallashtirish: video HAM, audio HAM endi
+    to'liq o'qituvchi brauzeridan, server-tomon Egress yo'q)."""
 
     def setUp(self):
         import tempfile
@@ -803,7 +799,7 @@ class AudioChunkUploadTests(APITestCase):
         self.assertEqual(r.status_code, 204)
         recording = self.LessonRecording.objects.get(lesson=self.lesson)
         self.assertIsNotNone(recording.audio_finalized_at)
-        self.assertEqual(recording.status, self.LessonRecording.Status.PENDING)
+        self.assertEqual(recording.status, self.LessonRecording.Status.RECORDING)
 
     def test_finalize_after_video_ready_triggers_merge_thread(self):
         from unittest.mock import patch
@@ -830,8 +826,8 @@ class AudioChunkUploadTests(APITestCase):
 
     def test_maybe_start_merge_is_idempotent(self):
         """Video va audio ikkalasi tayyor bo'lganda ikki marta chaqirilsa
-        ham (stop_recording HAM, finalize HAM chaqirishi mumkin) — faqat
-        BIR marta thread ishga tushadi."""
+        ham (video finalize HAM, audio finalize HAM chaqirishi mumkin) —
+        faqat BIR marta thread ishga tushadi."""
         from unittest.mock import patch
 
         from apps.live import services as live_services
@@ -929,110 +925,78 @@ class AudioChunkUploadTests(APITestCase):
         self.assertEqual(recording.status, self.LessonRecording.Status.FAILED)
         self.assertIn('Birlashtirish xatosi', recording.error)
 
-    def test_egress_start_prefers_screen_share_over_camera(self):
-        """O'qituvchi kamera VA ekran ulashishni bir vaqtda yoqqan bo'lsa,
-        yozuv ekran ulashish trackini olishi kerak (kontent ko'rsatish
-        kamera ko'rinishidan muhimroq) — kameradan foydalanish faqat
-        ekran ulashish yo'q bo'lgandagina."""
-        import asyncio
-        from unittest.mock import AsyncMock, patch
-
-        from livekit.protocol.models import ParticipantInfo, TrackInfo, TrackSource, TrackType
-        from livekit.protocol.room import ListParticipantsResponse
-
-        from apps.live.services import _egress_start
-
-        teacher_identity = 'user-abc'
-        participants = ListParticipantsResponse(participants=[
-            ParticipantInfo(identity=teacher_identity, tracks=[
-                TrackInfo(sid='TR_camera', type=TrackType.VIDEO, source=TrackSource.CAMERA),
-                TrackInfo(sid='TR_screen', type=TrackType.VIDEO, source=TrackSource.SCREEN_SHARE),
-                TrackInfo(sid='TR_mic', type=TrackType.AUDIO, source=TrackSource.MICROPHONE),
-            ]),
-        ])
-        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
-            mock_client = mock_livekit_cls.return_value
-            mock_client.room.list_participants = AsyncMock(return_value=participants)
-            mock_client.egress.start_track_egress = AsyncMock(
-                return_value=type('Info', (), {'egress_id': 'EG_x'})(),
-            )
-            mock_client.aclose = AsyncMock()
-            asyncio.run(_egress_start('room-1', 'out.webm', teacher_identity))
-
-        sent = mock_client.egress.start_track_egress.call_args.args[0]
-        self.assertEqual(sent.track_id, 'TR_screen')
-
-    def test_egress_start_falls_back_to_camera_without_screen_share(self):
-        import asyncio
-        from unittest.mock import AsyncMock, patch
-
-        from livekit.protocol.models import ParticipantInfo, TrackInfo, TrackSource, TrackType
-        from livekit.protocol.room import ListParticipantsResponse
-
-        from apps.live.services import _egress_start
-
-        teacher_identity = 'user-abc'
-        participants = ListParticipantsResponse(participants=[
-            ParticipantInfo(identity=teacher_identity, tracks=[
-                TrackInfo(sid='TR_camera', type=TrackType.VIDEO, source=TrackSource.CAMERA),
-            ]),
-        ])
-        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
-            mock_client = mock_livekit_cls.return_value
-            mock_client.room.list_participants = AsyncMock(return_value=participants)
-            mock_client.egress.start_track_egress = AsyncMock(
-                return_value=type('Info', (), {'egress_id': 'EG_x'})(),
-            )
-            mock_client.aclose = AsyncMock()
-            asyncio.run(_egress_start('room-1', 'out.webm', teacher_identity))
-
-        sent = mock_client.egress.start_track_egress.call_args.args[0]
-        self.assertEqual(sent.track_id, 'TR_camera')
-
-    def test_finalize_video_only_fallback(self):
+    def test_finalize_single_side_video_only_fallback(self):
+        """Audio (brauzerdan) hech qachon kelmasa — video bilan (ovozsiz)
+        yakunlanadi, yo'qotilmaydi."""
         from pathlib import Path
 
-        from apps.live.services import finalize_video_only
+        from apps.live.services import finalize_single_side
 
-        video_path = Path(self.tmp) / 'video.mp4'
+        video_path = Path(self.tmp) / 'video.webm'
         video_path.write_bytes(b'\x00' * 1024)
         recording = self.LessonRecording.objects.create(
-            lesson=self.lesson, egress_id='EG_x',
-            video_file_name='video.mp4', video_ready_at=timezone.now(),
+            lesson=self.lesson,
+            video_file_name='video.webm', video_ready_at=timezone.now(),
             status=self.LessonRecording.Status.RECORDING,
         )
-        finalize_video_only(self.lesson.id)
+        finalize_single_side(self.lesson.id)
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
-        self.assertEqual(recording.file_name, 'video.mp4')
+        self.assertEqual(recording.file_name, 'video.webm')
 
-    def test_stop_recording_resolves_actual_extension_livekit_wrote(self):
-        """Production'da topilgan xato (2026-08-28): Track Egress'ga `.mp4`
-        so'ralgan bo'lsa ham, LiveKit trackning haqiqiy kodekiga mos
-        `.webm` fayl yozgan — bazada nomuvofiq kengaytma qolib, yozuv
-        abadiy 'recording' holatida qolib qolgan edi. `stop_recording`
-        endi diskdagi haqiqiy faylni topib, nomni tuzatishi kerak."""
+    def test_finalize_single_side_audio_only_fallback(self):
+        """Video (brauzerdan — ekran ulashish ruxsati berilmagan va h.k.)
+        hech qachon kelmasa — audio bilan yakunlanadi, yo'qotilmaydi.
+        Video Track Egress orqali server-tomon KAFOLATLANMASdi (2026-08-28,
+        2-bosqich: video ham brauzerdan) — shuning uchun bu holat endi
+        haqiqiy imkoniyat."""
         from pathlib import Path
-        from unittest.mock import AsyncMock, patch
 
-        from apps.live.services import stop_recording
+        from apps.live.services import finalize_single_side
 
-        # Egress '.mp4' so'ralgan, lekin haqiqatda '.webm' yozgan
-        (Path(self.tmp) / 'lesson-abc123-x1.webm').write_bytes(b'\x00' * 2048)
+        audio_path = Path(self.tmp) / 'audio.webm'
+        audio_path.write_bytes(b'\x00' * 1024)
         recording = self.LessonRecording.objects.create(
-            lesson=self.lesson, egress_id='EG_x',
-            video_file_name='lesson-abc123-x1.mp4',
+            lesson=self.lesson,
+            audio_file_name='audio.webm', audio_finalized_at=timezone.now(),
             status=self.LessonRecording.Status.RECORDING,
         )
-        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
-            mock_client = mock_livekit_cls.return_value
-            mock_client.egress.stop_egress = AsyncMock()
-            mock_client.aclose = AsyncMock()
-            stop_recording(lesson=self.lesson)
-
+        finalize_single_side(self.lesson.id)
         recording.refresh_from_db()
-        self.assertEqual(recording.video_file_name, 'lesson-abc123-x1.webm')
-        self.assertIsNotNone(recording.video_ready_at)
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
+        self.assertEqual(recording.file_name, 'audio.webm')
+
+    def test_only_teacher_can_upload_video_chunk(self):
+        chunk = self.SimpleUploadedFile('c.webm', b'\x00' * 100, content_type='video/webm')
+        r = self.api(self.student).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/video/', {'chunk': chunk}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_video_chunks_append_and_finalize_triggers_merge_with_audio(self):
+        from unittest.mock import patch
+
+        c1 = self.SimpleUploadedFile('c.webm', b'VVVV', content_type='video/webm')
+        r = self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/video/',
+            {'chunk': c1, 'started_at': '2026-08-28T10:00:00Z'}, format='multipart',
+        )
+        self.assertEqual(r.status_code, 204)
+        recording = self.LessonRecording.objects.get(lesson=self.lesson)
+        self.assertTrue(recording.video_file_name)
+        self.assertEqual(recording.status, self.LessonRecording.Status.RECORDING)
+
+        a1 = self.SimpleUploadedFile('c.webm', b'AAAA')
+        self.api(self.teacher).post(
+            f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': a1}, format='multipart',
+        )
+        self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/video/finalize/')
+        with patch('threading.Thread') as thread_cls:
+            r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
+        self.assertEqual(r.status_code, 204)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
+        thread_cls.assert_called_once()
 
     @staticmethod
     def _make_test_video(path):

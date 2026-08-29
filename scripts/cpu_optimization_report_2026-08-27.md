@@ -131,26 +131,64 @@ Bu endi `stop_recording`, `finalize_video_only` va `_merge_recording`ning
 barchasida ishlaydi. Butun platforma tekshirildi — boshqa ta'sirlangan
 dars topilmadi.
 
-## 7. Hozirgi holat — xulosa jadvali
+## 7. Real production sinovda topilgan 2 ta qo'shimcha xato (2026-08-28, tuzatilgan)
+
+Frontend audio yuklashni sinab ko'rgach, ikkita real muammo aniqlandi:
+
+**a) Birlashtirish "VP8 MP4'ga sig'maydi" xatosi bilan qulab tushdi** —
+brauzer kamerasi/ekrani **VP8** kodlaydi, MP4 konteyner esa VP8'ni
+UMUMAN qo'llab-quvvatlamaydi (`ffmpeg`: "codec not currently supported in
+container"). Yechim: chiqish faylini `.mp4` emas, **`.webm`** qilish —
+WebM VP8'ni ham, Opusni ham tabiiy qo'llab-quvvatlaydi, audio uchun ham
+AAC'ga aylantirish shart bo'lmay qoldi (yana ham arzon).
+
+**b) Audio-video farqi dars davomida kattalashib bordi** (lablar bilan
+ovoz mos kelmay qoldi) — sababi: frontend audio bo'laklarini bir nechta
+**alohida** `MediaRecorder` seansidan yozgan (bitta uzluksiz sessiya
+o'rniga), bo'laklar orasida kichik vaqt bo'shliqlari hosil bo'lgan.
+Backend'da `-fflags +genpts` bilan qisman yumshatildi, lekin **haqiqiy
+yechim frontendda** — bitta uzluksiz `MediaRecorder` sessiyasi (hujjat
+yangilandi, aniq kod misoli bilan).
+
+## 8. Video ham brauzerga o'tkazildi — Track Egress butunlay olib
+## tashlandi (2026-08-29)
+
+Sinov paytida yana bir muammo topildi: server-tomon Track Egress faqat
+o'qituvchining **kamera** trackini yozar edi, ekran ulashish yoqilgan
+bo'lsa ham. Muhokama natijasida qaror qilindi: video ham (audio kabi)
+**to'liq o'qituvchi brauzeridan** kelsin — `getDisplayMedia` orqali
+o'qituvchining butun ekrani ("print screen" kabi) yoziladi, bu esa kim
+gapirsa, kim ekran ulashsa, kim kamerasini yoqsa — hammasini tabiiy
+ko'rsatadi, server-tomon tanlov mantig'i butunlay kerak emas bo'lib
+qoladi.
+
+**Natija:** LiveKit Egress (Track Egress) butunlay olib tashlandi —
+server endi video uchun HAM deyarli 0% CPU sarflaydi. Yangi endpoint:
+`POST /recording/video/` + `/recording/video/finalize/` (audio bilan bir
+xil naqsh). Ikkala tomon (video, audio) mustaqil — faqat bittasi kelsa
+ham (masalan brauzer qulab qolsa), mavjud bo'lgani bilan yakunlanadi.
+
+## 9. Hozirgi holat — xulosa jadvali
 
 | Nima | Holat |
 |---|---|
 | UDP port kengaytirish | ✅ Production'da ishlamoqda |
 | 503 xato uchun pauza yechimi | ✅ Production'da ishlamoqda |
-| Track Egress (video, arzon) | ✅ Production'da ishlamoqda (~0.17-0.2 CPU/dars) |
-| Track Egress kengaytma xatosi | ✅ Tuzatilgan va deploy qilingan |
-| Audio — brauzerda yozish (backend) | ✅ API production'da tayyor; **frontend ishi kutilmoqda** |
-| Audio — brauzerda yozish (frontend) | ⏳ Hali boshlanmagan |
+| Track Egress (server-tomon video) | ❌ Butunlay olib tashlandi (endi kerak emas) |
+| Video — brauzerda yozish (backend) | ✅ API production'da tayyor; **frontend ishi kutilmoqda** |
+| Video — brauzerda yozish (frontend) | ⏳ Hali boshlanmagan |
+| Audio — brauzerda yozish (backend) | ✅ API production'da tayyor |
+| Audio — brauzerda yozish (frontend) | 🟡 Boshlangan, lekin bitta-uzluksiz-sessiya talabi hali bajarilmagan |
+| WebM konteyner (VP8/Opus) xatosi | ✅ Tuzatilgan va deploy qilingan |
+| Audio-video vaqt siljishi | 🟡 Backend tarafdan yumshatildi; asosiy yechim frontendda kutilmoqda |
 | Lesson-live WebSocket sinxronizatsiya | ✅ Production'da ishlamoqda |
 
-## 8. Keyingi qadamlar
+## 10. Keyingi qadamlar
 
-1. Frontend jamoasi audio yozish qismini yozadi (hujjat tayyor, backend
-   API allaqachon ishlaydi — sinab ko'rish mumkin)
-2. Frontend tugagach, kichik miqyosda (1-2 xona) birga sinaladi
-3. Audio ham ishga tushgach — haqiqiy CPU narxini (maqsad: ~0.1-0.2/dars)
-   real darsda o'lchab tasdiqlaymiz
-4. (Kelajakda, muhokama qilindi lekin hali qaror qilinmagan) — videoni
-   ham to'liq brauzerga o'tkazish g'oyasi, server CPU'sini yanada
-   (deyarli 0'ga) tushirish uchun — bunda ishonchlilik-arzonlik
-   muvozanati alohida ko'rib chiqilishi kerak.
+1. Frontend jamoasi video (`getDisplayMedia`) va audio yozish qismini
+   yozadi/tuzatadi (hujjat tayyor, backend API allaqachon ishlaydi)
+2. Audio uchun bitta-uzluksiz-`MediaRecorder`-sessiya talabini
+   bajarishlari SHART (aks holda vaqt siljishi davom etadi)
+3. Frontend tugagach, kichik miqyosda (1-2 xona) birga sinaladi
+4. Ikkalasi ham ishga tushgach — haqiqiy CPU narxini (maqsad:
+   deyarli 0/dars, faqat diskka yozish) real darsda o'lchab tasdiqlaymiz

@@ -72,12 +72,6 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         except Exception:  # noqa: BLE001
             import logging
             logging.getLogger('apps').exception('lesson_live broadcast failed')
-    if is_teacher and lesson.status == Lesson.Status.LIVE:
-        # Video yozuv KAFOLATLANADI (EduTech.docx) — har kirishda: birinchi
-        # kirishda boshlaydi, qayta kirsa/backend restart bo'lsa aktiv
-        # egress'ni topib oladi yoki qaytadan boshlaydi. Fonda, xatosi
-        # darsga xalaqit bermaydi.
-        start_recording(lesson=lesson)
     if user.role == User.Role.STUDENT:
         lesson_services.mark_joined(lesson=lesson, student=user)
         _ensure_attention_schedule(lesson=lesson, student=user)
@@ -505,243 +499,31 @@ def unban_participant(*, teacher: User, lesson_id, student_id, request=None) -> 
     return bool(deleted)
 
 
-# ── Dars video yozuvi (LiveKit Track Egress + brauzerdan audio) ────────────
+# ── Dars video yozuvi (brauzerdan video + audio, chunked upload) ───────────
 # EduTech.docx: "dars video zapisi avtomatik saqlansin — o'qituvchi guruhni
-# o'chirmaguncha". Ikki qismdan yig'iladi (CPU tejash uchun — RoomComposite
-# o'rniga, 2026-08-27 optimallashtirish):
-#   VIDEO — Track Egress o'qituvchi kamerasini XOM nusxa ko'chiradi (Chrome
-#     render/qayta kodlash yo'q, ~0.15-0.2 CPU).
-#   AUDIO — o'qituvchi brauzeri BARCHA ishtirokchilar ovozini ichkarida
-#     (Web Audio API) aralashtirib, bo'lak-bo'lak (chunk) yuklaydi (server
-#     CPU'si deyarli 0 — faqat diskka yozish). Ko'proq ishonchlilik uchun:
-#     brauzer har bo'lak serverga tushgach, o'z xotirasidan o'chiradi.
-# Ikkalasi ham tayyor bo'lgach, fon jarayonida `ffmpeg`da (qayta kodlashsiz,
-# faqat audio->AAC) vaqt farqiga moslab birlashtiriladi. Fayl recordings
-# volume'ida; faqat auth endpoint orqali beriladi (apps/lessons).
-
-def _friendly_egress_error(exc) -> str:
-    """Xom SDK xatosini foydalanuvchi tushunadigan o'zbekcha matnga aylantiradi
-    (frontend `error` maydonini to'g'ridan-to'g'ri ko'rsatadi)."""
-    raw = str(exc)
-    if 'does not exist' in raw:
-        return "Yozuv boshlanmadi: darsga hech kim ulanmadi (xona ochilmadi)."
-    if 'status=401' in raw or 'unauthenticated' in raw.lower():
-        return 'Yozuv xizmati avtorizatsiyadan o\'tmadi — server sozlamalarini tekshiring.'
-    if 'Start signal' in raw:
-        return "Yozuv bekor qilindi: xonada video/audio bo'lmadi."
-    if 'resource' in raw.lower() or 'exhausted' in raw.lower():
-        return "Yozuv xizmati band — birozdan so'ng darsga qayta kiring."
-    return f'Yozuvda texnik xato: {raw[:200]}'
-
-
-def start_recording(*, lesson: Lesson) -> None:
-    """Dars yozuvini KAFOLATLAYDI (idempotent) — o'qituvchi darsga har kirganda
-    chaqiriladi:
-
-      - xonada allaqachon aktiv egress bo'lsa — o'shani o'zlashtiradi (backend
-        restart / qayta kirish holatlari);
-      - bo'lmasa yangisini boshlaydi (xona ochilguncha 2 daqiqagacha kutadi);
-      - avvalgi urinish FAILED/abort bo'lgan bo'lsa ham qayta uriniladi.
-
-    Xatolar dars oqimini hech qachon buzmaydi (fon thread).
-    """
-    import logging
-    import threading
-
-    from apps.lessons.models import LessonRecording
-
-    if not getattr(settings, 'RECORDINGS_AUTO_START', True):
-        return  # testlarda o'chirilgan (fon thread + tarmoq kerak emas)
-
-    recording, _created = LessonRecording.objects.get_or_create(lesson=lesson)
-    teacher_identity = f'user-{lesson.course.teacher_id}'
-
-    def _target():
-        import time as _time
-        import uuid as _uuid
-
-        from django.db import close_old_connections
-
-        try:
-            # 1) Xonada aktiv egress bormi? Bor bo'lsa — o'zlashtiramiz.
-            try:
-                active = asyncio.run(_egress_active(lesson.room_name))
-            except Exception:  # noqa: BLE001 — ro'yxat olinmasa, yangi boshlaymiz
-                active = None
-            if active:
-                LessonRecording.objects.filter(pk=recording.pk).update(
-                    egress_id=active, status=LessonRecording.Status.RECORDING, error='',
-                    video_started_at=recording.video_started_at or timezone.now(),
-                )
-                return
-
-            # 2) Yangi egress. Fayl nomi har urinishda unikal — avvalgi
-            #    abort qoldig'i ustiga yozilmaydi.
-            file_name = f'{lesson.room_name}-{_uuid.uuid4().hex[:6]}.mp4'
-            LessonRecording.objects.filter(pk=recording.pk).update(
-                status=LessonRecording.Status.PENDING,
-            )
-
-            # Token berilgan payt o'qituvchi brauzeri hali xonaga ULANMAGAN
-            # (yoki kamerasi hali publish qilinmagan) bo'lishi mumkin —
-            # "does not exist"da 2 daqiqagacha kutamiz.
-            last_error = None
-            for _attempt in range(24):
-                try:
-                    egress_id = asyncio.run(_egress_start(lesson.room_name, file_name, teacher_identity))
-                    LessonRecording.objects.filter(pk=recording.pk).update(
-                        egress_id=egress_id, video_file_name=file_name,
-                        video_started_at=timezone.now(),
-                        status=LessonRecording.Status.RECORDING, error='',
-                    )
-                    return
-                except Exception as exc:  # noqa: BLE001
-                    last_error = exc
-                    if 'does not exist' not in str(exc):
-                        break  # boshqa xato — kutish foyda bermaydi
-                    _time.sleep(5)
-            logging.getLogger('apps').warning('egress start failed: %s', last_error)
-            LessonRecording.objects.filter(pk=recording.pk).update(
-                status=LessonRecording.Status.FAILED,
-                error=_friendly_egress_error(last_error),
-            )
-        finally:
-            close_old_connections()
-
-    threading.Thread(target=_target, daemon=True).start()
-
-
-async def _egress_active(room_name: str) -> str | None:
-    """Xonadagi aktiv (tugamagan) egress ID sini qaytaradi, bo'lmasa None."""
-    from livekit.protocol.egress import ListEgressRequest
-
-    client = LiveKitAPI(
-        url=_livekit_http_url(),
-        api_key=settings.LIVEKIT_API_KEY,
-        api_secret=settings.LIVEKIT_API_SECRET,
-    )
-    try:
-        result = await client.egress.list_egress(ListEgressRequest(
-            room_name=room_name, active=True,
-        ))
-        items = list(result.items)
-        return items[0].egress_id if items else None
-    finally:
-        await client.aclose()
-
-
-async def _egress_start(room_name: str, file_name: str, teacher_identity: str) -> str:
-    """O'qituvchining video trackini XOM nusxa ko'chiradi (qayta kodlashsiz —
-    Chrome render yo'q, CPU narxi RoomComposite'ga nisbatan ~7-10x arzon).
-    Audio endi bu yerda yo'q — brauzerdan alohida yuklanadi (yuqoridagi izoh).
-
-    Ekran ulashish (SCREEN_SHARE) kamera (CAMERA)dan USTUN — o'qituvchi
-    darsni boshlaganda ekran ulashgan bo'lsa, aynan o'sha oqim yoziladi
-    (kontent kamera ko'rinishidan muhimroq). Diqqat: Track Egress BITTA
-    trackka "yopishib" oladi — agar o'qituvchi yozuv boshlangandan KEYIN
-    ekran ulashishni yoqsa/o'chirsa, joriy yozuv o'sha o'zgarishga
-    avtomatik moslashmaydi (bu — kelajakda alohida ko'rib chiqilishi
-    kerak bo'lgan cheklov, webhook-asosidagi track-almashtirishni
-    talab qiladi)."""
-    from livekit.protocol.egress import DirectFileOutput, TrackEgressRequest
-    from livekit.protocol.models import TrackType
-    from livekit.protocol.room import ListParticipantsRequest
-
-    client = LiveKitAPI(
-        url=_livekit_http_url(),
-        api_key=settings.LIVEKIT_API_KEY,
-        api_secret=settings.LIVEKIT_API_SECRET,
-    )
-    try:
-        result = await client.room.list_participants(ListParticipantsRequest(room=room_name))
-        camera_track_id = None
-        screen_track_id = None
-        for p in result.participants:
-            if p.identity != teacher_identity:
-                continue
-            for t in p.tracks:
-                if t.type != TrackType.VIDEO:
-                    continue
-                if t.source == TrackSource.SCREEN_SHARE:
-                    screen_track_id = t.sid
-                elif t.source == TrackSource.CAMERA:
-                    camera_track_id = t.sid
-        track_id = screen_track_id or camera_track_id
-        if not track_id:
-            # start_recording'dagi kutish tsikli aynan shu matnni kutadi
-            raise RuntimeError('room does not exist — teacher video track not published yet')
-        info = await client.egress.start_track_egress(TrackEgressRequest(
-            room_name=room_name, track_id=track_id,
-            file=DirectFileOutput(filepath=f'{settings.EGRESS_OUTPUT_PREFIX}/{file_name}'),
-        ))
-        return info.egress_id
-    finally:
-        await client.aclose()
-
-
-def _resolve_video_file(recording) -> str | None:
-    """LiveKit Track Egress biz so'ragan kengaytmani (masalan `.mp4`)
-    e'tiborsiz qoldirib, trackning HAQIQIY kodekiga mos konteynerda
-    (masalan VP8 uchun `.webm`) yozishi mumkin — bu hujjatlashtirilmagan,
-    lekin kuzatilgan xatti-harakat (2026-08-28: production'da topilgan
-    xato — bazada `.mp4` yozilgan, diskda `.webm` fayl bor edi, shu sabab
-    yozuv "recording" holatida abadiy qolib qolgan). Shuning uchun
-    kengaytmaga ishonmasdan, diskdan bir xil BAZA nomli faylni qidiramiz."""
-    if not recording.video_file_name:
-        return None
-    path = settings.RECORDINGS_DIR / recording.video_file_name
-    if path.exists():
-        return recording.video_file_name
-    base = recording.video_file_name.rsplit('.', 1)[0]
-    matches = sorted(settings.RECORDINGS_DIR.glob(f'{base}.*'))
-    return matches[0].name if len(matches) == 1 else None
-
-
-def stop_recording(*, lesson: Lesson) -> None:
-    """Darsni yakunlashda video egress'ni to'xtatadi (best-effort — xona
-    bo'shasa egress baribir o'zi yakunlaydi), so'ng audio ham tayyor bo'lsa
-    birlashtirishni ishga tushiradi."""
-    import logging
-
-    from apps.lessons.models import LessonRecording
-
-    recording = LessonRecording.objects.filter(lesson=lesson).first()
-    if recording is None or not recording.egress_id:
-        return
-
-    async def _stop():
-        from livekit.protocol.egress import StopEgressRequest
-
-        client = LiveKitAPI(
-            url=_livekit_http_url(),
-            api_key=settings.LIVEKIT_API_KEY,
-            api_secret=settings.LIVEKIT_API_SECRET,
-        )
-        try:
-            await client.egress.stop_egress(StopEgressRequest(egress_id=recording.egress_id))
-        finally:
-            await client.aclose()
-
-    try:
-        asyncio.run(_stop())
-    except Exception as exc:  # allaqachon tugagan bo'lishi mumkin
-        logging.getLogger('apps').info('egress stop: %s', exc)
-    resolved = _resolve_video_file(recording)
-    if resolved:
-        recording.video_file_name = resolved
-    recording.ended_at = timezone.now()
-    recording.video_ready_at = timezone.now()
-    recording.save(update_fields=['ended_at', 'video_ready_at', 'video_file_name', 'updated_at'])
-    maybe_start_merge(lesson.id)
-
+# o'chirmaguncha". 2026-08-28 optimallashtirish, 2-bosqich: video ENDI HAM
+# server-tomon Track Egress orqali EMAS — audio kabi TO'LIQ o'qituvchi
+# brauzeridan keladi. Sabab: Track Egress FAQAT bitta trackni (kamera YOKI
+# ekran) yoza olardi, dars davomida almashtirishni qo'llab-quvvatlamas edi.
+# Brauzerning o'zi ekranini (`getDisplayMedia` — LiveKit sahifasining o'zi,
+# "print screen" kabi) yozib olsa — kim gapirsa, kim ekran ulashsa, kim
+# kamerasini yoqsa — HAMMASI tabiiy ravishda ko'rinadi, serverda tanlov/
+# almashtirish mantig'i kerak emas, va CPU endi VIDEO uchun HAM deyarli 0.
+#
+# Video va audio ikkalasi ham bo'lak-bo'lak (chunk) yuklanadi (apps.lessons
+# .services.upload_recording_video_chunk/upload_recording_audio_chunk).
+# Ikkalasi ham tayyor bo'lgach, fon jarayonida `ffmpeg`da vaqt farqiga
+# moslab (qayta kodlashsiz) WebM faylga birlashtiriladi. Faqat BITTASI
+# kelsa (ikkinchisi hech qachon kelmasa — brauzer qulab qolgan, ruxsat
+# berilmagan) — MAVJUD bo'lgani bilan yakunlanadi, butunlay yo'qotilmaydi.
 
 def end_room(lesson: Lesson) -> None:
     """LiveKit xonasini BUTUNLAY o'chiradi — barcha ishtirokchilarni (video/
     audio) bir vaqtda uzadi. Dars rejalashtirilgan vaqti tugab, avtomatik
     yakunlanganda ishlatiladi (apps.lessons.services.auto_finish_expired_lessons) —
-    o'qituvchi qo'lda "tugatish"ni bosmagan bo'lsa ham, video cheksiz
-    ochiq qolib ketmasin. Xona allaqachon bo'sh/yo'q bo'lsa ham xato
-    bermaydi (best-effort, xuddi stop_recording kabi)."""
+    o'qituvchi qo'lda "tugatish"ni bosmagan bo'lsa ham, xona cheksiz ochiq
+    qolib ketmasin. Xona allaqachon bo'sh/yo'q bo'lsa ham xato bermaydi
+    (best-effort)."""
     import logging
 
     async def _delete():
@@ -764,11 +546,11 @@ def end_room(lesson: Lesson) -> None:
 
 
 def maybe_start_merge(lesson_id) -> None:
-    """Video (Track Egress) va audio (brauzerdan yuklangan) ikkalasi ham
-    tayyor bo'lsa — fon jarayonida (thread) ffmpeg bilan birlashtiradi.
-    Ikkala tomondan ham (stop_recording va audio finalize) chaqiriladi;
-    DB-level atomik status o'tishi (RECORDING -> MERGING) ikki marta ishga
-    tushishining oldini oladi."""
+    """Video va audio (ikkalasi ham brauzerdan yuklangan) tayyor bo'lsa —
+    fon jarayonida (thread) ffmpeg bilan birlashtiradi. Ikkala tomondan
+    ham (video finalize va audio finalize) chaqiriladi; DB-level atomik
+    status o'tishi (RECORDING -> MERGING) ikki marta ishga tushishining
+    oldini oladi."""
     import threading
 
     from apps.lessons.models import LessonRecording
@@ -788,30 +570,37 @@ def maybe_start_merge(lesson_id) -> None:
     threading.Thread(target=_merge_recording, args=(recording.pk,), daemon=True).start()
 
 
-def finalize_video_only(lesson_id) -> None:
-    """Audio (brauzerdan) hech qachon kelmasa (masalan o'qituvchi brauzeri
-    yopilib qolgan) — video yozuvni OVOZSIZ, lekin YO'QOTMASDAN yakunlaydi.
+def finalize_single_side(lesson_id) -> None:
+    """Video YOKI audiodan faqat BITTASI keladi, ikkinchisi HECH QACHON
+    kelmaydi (brauzer qulab qolgan, ruxsat berilmagan va h.k.) — mavjud
+    bo'lgan tomon bilan yakunlaydi, butunlay yo'qotmaydi. Ikkala
+    yo'nalish uchun ham ishlaydi (faqat video, yoki faqat audio).
     `maybe_start_merge`ga o'xshab, atomik DB guard ikki marta ishlashning
     oldini oladi. Chaqiruvchi (`apps.lessons.services.recording_info`)
-    kutish vaqtini (video_ready_at'dan necha daqiqa) o'zi hisoblaydi."""
+    qancha kutish kerakligini o'zi hisoblaydi."""
     import logging
 
     from apps.lessons.models import LessonRecording
 
     recording = LessonRecording.objects.filter(lesson_id=lesson_id).first()
-    if recording is None or not recording.video_file_name:
+    if recording is None:
         return
-    resolved = _resolve_video_file(recording)
-    if not resolved:
+    if recording.video_file_name and not recording.audio_file_name:
+        source, label = recording.video_file_name, "video-only (audio yo'q)"
+    elif recording.audio_file_name and not recording.video_file_name:
+        source, label = recording.audio_file_name, "audio-only (video yo'q)"
+    else:
+        return
+    path = settings.RECORDINGS_DIR / source
+    if not path.exists():
         return
     updated = LessonRecording.objects.filter(
         pk=recording.pk, status=LessonRecording.Status.RECORDING,
-    ).update(
-        file_name=resolved, video_file_name=resolved,
-        status=LessonRecording.Status.COMPLETED,
-    )
+    ).update(file_name=source, status=LessonRecording.Status.COMPLETED)
     if updated:
-        logging.getLogger('apps').info('recording %s finalized video-only (no audio)', recording.pk)
+        logging.getLogger('apps').info('recording %s finalized %s', recording.pk, label)
+        recording.refresh_from_db()
+        _announce_recording_ready(recording)
 
 
 def _merge_recording(recording_pk) -> None:
@@ -838,7 +627,7 @@ def _merge_recording(recording_pk) -> None:
 
     try:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
-        video_path = settings.RECORDINGS_DIR / (_resolve_video_file(recording) or recording.video_file_name)
+        video_path = settings.RECORDINGS_DIR / recording.video_file_name
         audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
         # .webm, .mp4 EMAS — brauzer kamerasi VP8 (yoki VP9) kodlaydi, va
         # VP8/VP9 MP4 konteynerida UMUMAN qo'llab-quvvatlanmaydi
@@ -876,6 +665,8 @@ def _merge_recording(recording_pk) -> None:
         LessonRecording.objects.filter(pk=recording_pk).update(
             file_name=output_name, status=LessonRecording.Status.COMPLETED,
         )
+        recording.refresh_from_db()
+        _announce_recording_ready(recording)
     except Exception as exc:  # noqa: BLE001
         logging.getLogger('apps').exception('recording merge failed: %s', exc)
         LessonRecording.objects.filter(pk=recording_pk).update(
@@ -883,3 +674,19 @@ def _merge_recording(recording_pk) -> None:
         )
     finally:
         close_old_connections()
+
+
+def _announce_recording_ready(recording) -> None:
+    """Yozuv (video+audio birlashgan, yoki faqat bittasi) tayyor bo'lganda
+    guruh chatga e'lon qiladi. Bu — endi `finish_lesson` ichida EMAS,
+    chunki brauzer video/audio yuklashni finish tugmasi bosilgandan KEYIN
+    ham davom ettirishi mumkin (chunked upload asinxron); e'lon faqat
+    fayl HAQIQATAN tayyor bo'lganda yuboriladi."""
+    import logging
+
+    try:
+        from apps.lessons.services import publish_recording_message
+        title = recording.title or recording.lesson.title
+        publish_recording_message(recording.lesson, title)
+    except Exception:  # noqa: BLE001
+        logging.getLogger('apps').exception('recording announce failed')

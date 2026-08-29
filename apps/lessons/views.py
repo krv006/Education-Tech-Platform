@@ -262,6 +262,31 @@ class LessonViewSet(viewsets.ModelViewSet):
         return Response(status=204)
 
     @action(
+        detail=True, methods=['post'], url_path='recording/video',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def recording_video_chunk(self, request, pk=None):
+        """O'qituvchi brauzeridan video bo'lagi (chunk) — ekranning o'zi
+        (`getDisplayMedia`), audio bilan bir xil naqshda."""
+        lesson = self.get_object()
+        chunk = request.FILES.get('chunk')
+        if not chunk:
+            raise ValidationError({'chunk': "Fayl bo'lagi yuborilmadi."})
+        services.upload_recording_video_chunk(
+            teacher=request.user, lesson=lesson, chunk=chunk,
+            started_at=request.data.get('started_at') or None,
+        )
+        return Response(status=204)
+
+    @action(detail=True, methods=['post'], url_path='recording/video/finalize')
+    def recording_video_finalize(self, request, pk=None):
+        """O'qituvchi video yuklashni tugatdi — audio ham tayyor bo'lsa,
+        fon jarayonida birlashtirish boshlanadi."""
+        lesson = self.get_object()
+        services.finalize_recording_video(teacher=request.user, lesson=lesson)
+        return Response(status=204)
+
+    @action(
         detail=True, methods=['get'], url_path='recording/stream',
         permission_classes=[AllowAny], authentication_classes=[],
     )
