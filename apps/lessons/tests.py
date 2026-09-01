@@ -985,7 +985,7 @@ class AudioChunkUploadTests(APITestCase):
         # lekin aslida yaroqsiz baytlar qo'shamiz — soxta moslik taqlidi.
         video_path.write_bytes(real_bytes[:mid] + _EBML_MAGIC + b'\xff' * 200 + real_bytes[mid:])
 
-        result = _normalize_webm(video_path, 'v')
+        result = _normalize_webm(video_path)
         self.assertEqual(result, video_path)
 
     def test_normalize_webm_single_segment_returns_same_path(self):
@@ -997,7 +997,7 @@ class AudioChunkUploadTests(APITestCase):
 
         video_path = Path(self.tmp) / 'video.webm'
         self._make_test_video(video_path)
-        result = _normalize_webm(video_path, 'v')
+        result = _normalize_webm(video_path)
         self.assertEqual(result, video_path)
 
     def test_normalize_webm_multi_segment_keeps_full_duration_and_seeks(self):
@@ -1010,9 +1010,10 @@ class AudioChunkUploadTests(APITestCase):
         (`-c copy`) bilan ishlaganda, ikkinchi (kattaroq) segment
         ffmpeg tomonidan XATOSIZ, lekin JIMGINA tashlab yuborilgan
         edi — 5:43 daqiqalik yozuvdan atigi 37 soniyasi qolgan.
-        Shuning uchun bu yerda nafaqat seek, balki YAKUNIY DAVOMIYLIK
-        ham (ikkala segment yig'indisiga yaqin) tekshiriladi — aks
-        holda xuddi shu regressiya sezilmasdan qolardi."""
+        Endi `mkvmerge --append` ishlatiladi (qayta kodlamasdan, CPU
+        tejash rejasiga mos). Bu yerda nafaqat seek, balki YAKUNIY
+        DAVOMIYLIK ham (ikkala segment yig'indisiga yaqin) tekshiriladi
+        — aks holda xuddi shu regressiya sezilmasdan qolardi."""
         import subprocess
         from pathlib import Path
 
@@ -1025,7 +1026,7 @@ class AudioChunkUploadTests(APITestCase):
         video_path = Path(self.tmp) / 'video.webm'
         video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
 
-        result = _normalize_webm(video_path, 'v')
+        result = _normalize_webm(video_path)
         self.assertNotEqual(result, video_path)
         self.assertTrue(result.exists())
 

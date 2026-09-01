@@ -586,9 +586,9 @@ def finalize_single_side(lesson_id) -> None:
     if recording is None:
         return
     if recording.video_file_name and not recording.audio_file_name:
-        source, label, stream_type = recording.video_file_name, "video-only (audio yo'q)", 'v'
+        source, label = recording.video_file_name, "video-only (audio yo'q)"
     elif recording.audio_file_name and not recording.video_file_name:
-        source, label, stream_type = recording.audio_file_name, "audio-only (video yo'q)", 'a'
+        source, label = recording.audio_file_name, "audio-only (video yo'q)"
     else:
         return
     path = settings.RECORDINGS_DIR / source
@@ -596,7 +596,7 @@ def finalize_single_side(lesson_id) -> None:
         return
     # Merge bo'lmasa ham (yagona tomon) ko'p-segmentli fayl bo'lishi mumkin
     # — u qidirish/pauzada qotib qolmasin deb shu yerda ham to'g'rilanadi.
-    normalized_path = _normalize_webm(path, stream_type)
+    normalized_path = _normalize_webm(path)
     file_name = normalized_path.name
     updated = LessonRecording.objects.filter(
         pk=recording.pk, status=LessonRecording.Status.RECORDING,
@@ -624,40 +624,34 @@ def _find_ebml_segment_offsets(data: bytes) -> list[int]:
     return positions
 
 
-def _normalize_webm(path, stream_type: str):
+def _normalize_webm(path):
     """Brauzer tarmoq uzilib-ulanganda yoki ekran ulashish o'chirib-
     yoqilganda MediaRecorder sessiyasi qayta boshlanadi — natijada bir
     nechta MUSTAQIL WebM hujjati serverda xom baytlarda ketma-ket
     ulanib qoladi (`upload_recording_video_chunk`/`..._audio_chunk`
-    shunchaki 'ab' bilan qo'shib boradi). ffmpeg esa BITTA Segment
-    kutadi: ikkinchi hujjatdan keyingi qism vaqt belgisi buzilgan holda
-    o'qiladi (production'da topilgan xato: 6 daqiqalik yozuvdan atigi
-    ~30 soniyasi tiklangan, undan keyingi joyga o'tish esa umuman
-    ishlamagan).
+    shunchaki 'ab' bilan qo'shib boradi). Oddiy demuxer/muxerlar BITTA
+    Segment kutadi: ikkinchi hujjatdan keyingi qism vaqt belgisi buzilgan
+    holda o'qiladi (production'da topilgan xato: 6 daqiqalik yozuvdan
+    atigi ~30 soniyasi tiklangan, qidiruv/pauza umuman ishlamagan).
 
-    DIQQAT: `-f concat` DEMUXERI bilan (`-c copy`) sinalgan edi, lekin
-    ishonchsiz chiqdi — Cues'siz (indekssiz) WebM bo'laklarining o'z
-    ichidagi davomiyligiga ishonib, KEYINGI segmentni jimgina tashlab
-    yuboradi (production'da topilgan xato, 2026-09-01: 5:43 daqiqalik
-    videodan atigi 37 soniyasi qoldi, xatosiz "muvaffaqiyatli"
-    chiqqan holda). Shuning uchun `concat` FILTRI ishlatiladi — u
-    dekodlab-qayta kodlaydi (sekinroq, lekin faqat shu KAMDAN-KAM
-    ko'p-segmentli holatda ishlaydi), konteyner darajasidagi
-    (ishonchsiz) davomiylikka emas, haqiqiy dekodlangan kadrlarga
-    tayanadi. Bitta hujjatli (normal) fayllarga tegilmaydi —
+    `mkvmerge --append` (MKVToolNix) ishlatiladi — u bir xil kodekli
+    Matroska/WebM segmentlarini QAYTA KODLAMASDAN, vaqt belgilarini
+    to'g'irlab ulaydi (lossless append). Bu — CPU tejash rejasiga mos:
+    server ffmpeg bilan dekodlab-qayta kodlashga (sezilarli CPU) emas,
+    faqat konteyner darajasidagi bitta arzon buyruqqa muhtoj. (Avval
+    ffmpeg `-f concat` DEMUXERI bilan sinalgan edi — ishonchsiz chiqdi,
+    Cues'siz bo'laklarning o'z ichidagi davomiyligiga ishonib keyingi
+    segmentni jimgina tashlab yuborgan edi, production'da topilgan xato,
+    2026-09-01.) Bitta hujjatli (normal) fayllarga tegilmaydi —
     o'zgarishsiz qaytariladi.
 
-    Yana bir DIQQAT (production'da topilgan, 2026-09-01): `1A45DFA3`
-    baytlari siqilgan video ma'lumotlari ICHIDA ham TASODIFAN uchrashi
-    mumkin — bu haqiqiy segment chegarasi emas, va shu nomzoddan
-    bo'lingan qism mustaqil EBML hujjat sifatida ochilmaydi ("EBML
-    header parsing failed"). Shuning uchun har bir nomzod (birinchisidan
-    tashqari) ffprobe bilan haqiqatan mustaqil WebM sifatida
-    ochilishi tasdiqlanadi; soxtasi oldingi segmentga qo'shib
-    yuboriladi (bo'linish nuqtasi sifatida e'tiborga olinmaydi).
-
-    `stream_type` — 'v' (video, VP8ga qayta kodlanadi) yoki 'a'
-    (audio, Opusga qayta kodlanadi)."""
+    DIQQAT (production'da topilgan, 2026-09-01): `1A45DFA3` baytlari
+    siqilgan video ma'lumotlari ICHIDA ham TASODIFAN uchrashi mumkin —
+    bu haqiqiy segment chegarasi emas, va shu nomzoddan bo'lingan qism
+    mustaqil EBML hujjat sifatida ochilmaydi. Shuning uchun har bir
+    nomzod (birinchisidan tashqari) ffprobe bilan haqiqatan mustaqil
+    WebM sifatida ochilishi tasdiqlanadi; soxtasi oldingi segmentga
+    qo'shib yuboriladi (bo'linish nuqtasi sifatida e'tiborga olinmaydi)."""
     import logging
     import subprocess
     import tempfile
@@ -699,31 +693,17 @@ def _normalize_webm(path, stream_type: str):
             segment_path.write_bytes(data[bounds[i]:bounds[i + 1]])
             segment_paths.append(segment_path)
 
-        n = len(segment_paths)
-        inputs = []
-        for segment_path in segment_paths:
-            inputs += ['-i', str(segment_path)]
+        cmd = ['mkvmerge', '-q', '-o', str(normalized_path), str(segment_paths[0])]
+        for segment_path in segment_paths[1:]:
+            cmd += ['+', str(segment_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-        if stream_type == 'v':
-            stream_refs = ''.join(f'[{i}:v]' for i in range(n))
-            filter_complex = f'{stream_refs}concat=n={n}:v=1:a=0[out]'
-            codec_args = ['-map', '[out]', '-c:v', 'libvpx', '-b:v', '1500k']
-        else:
-            stream_refs = ''.join(f'[{i}:a]' for i in range(n))
-            filter_complex = f'{stream_refs}concat=n={n}:v=0:a=1[out]'
-            codec_args = ['-map', '[out]', '-c:a', 'libopus', '-b:a', '128k']
-
-        cmd = [
-            'ffmpeg', '-y', *inputs,
-            '-filter_complex', filter_complex,
-            *codec_args, '-cues_to_front', '1', str(normalized_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-
-    if result.returncode != 0 or not normalized_path.exists():
+    # mkvmerge chiqish kodlari: 0 — xatosiz, 1 — ogohlantirish bilan
+    # (muvaffaqiyatli), 2 — xato.
+    if result.returncode not in (0, 1) or not normalized_path.exists():
         logging.getLogger('apps').error(
             'webm normalize failed for %s (%d segments): %s',
-            path.name, len(offsets), result.stderr[-500:],
+            path.name, len(offsets), (result.stdout + result.stderr)[-500:],
         )
         return path
     return normalized_path
@@ -756,8 +736,8 @@ def _merge_recording(recording_pk) -> None:
     normalized_paths = []
     try:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
-        video_path = _normalize_webm(settings.RECORDINGS_DIR / recording.video_file_name, 'v')
-        audio_path = _normalize_webm(settings.RECORDINGS_DIR / recording.audio_file_name, 'a')
+        video_path = _normalize_webm(settings.RECORDINGS_DIR / recording.video_file_name)
+        audio_path = _normalize_webm(settings.RECORDINGS_DIR / recording.audio_file_name)
         raw_video_path = settings.RECORDINGS_DIR / recording.video_file_name
         raw_audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
         if video_path != raw_video_path:
