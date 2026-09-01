@@ -911,6 +911,88 @@ class AudioChunkUploadTests(APITestCase):
         self.assertTrue((Path(self.tmp) / recording.file_name).exists())
         self.assertGreater((Path(self.tmp) / recording.file_name).stat().st_size, 0)
 
+    def test_merge_recording_survives_concatenated_video_segments(self):
+        """Production'da topilgan xato (2026-09-01): audio kabi, video
+        tomonida ham brauzer sessiyasi tarmoq uzilib-ulanganda yoki
+        ekran ulashish o'chirib-yoqilganda qayta boshlanishi mumkin —
+        natijada bir nechta mustaqil WebM hujjati xom ulanib qoladi.
+        Bunday faylda ikkinchi segmentdan keyingi joyga o'tish umuman
+        ishlamas edi ("Output file is empty") — `_normalize_webm` orqali
+        to'g'ri ulanishi va yakuniy faylda butun davomiylik bo'ylab
+        qidirish ishlashi kerak."""
+        from pathlib import Path
+
+        from apps.live.services import _merge_recording
+
+        seg1 = Path(self.tmp) / 'vseg1.webm'
+        seg2 = Path(self.tmp) / 'vseg2.webm'
+        self._make_test_video(seg1)
+        self._make_test_video(seg2)
+        video_path = Path(self.tmp) / 'video.webm'
+        video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
+        audio_path = Path(self.tmp) / 'audio.webm'
+        self._make_test_audio(audio_path)
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson, egress_id='EG_x',
+            video_file_name='video.webm', video_started_at=timezone.now(),
+            audio_file_name='audio.webm',
+            audio_started_at=timezone.now(),
+            audio_finalized_at=timezone.now(),
+            status=self.LessonRecording.Status.MERGING,
+        )
+        _merge_recording(recording.pk)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED, recording.error)
+        output_path = Path(self.tmp) / recording.file_name
+        self.assertTrue(output_path.exists())
+        self.assertGreater(output_path.stat().st_size, 0)
+        # Vaqtinchalik normalizatsiya fayli o'chirilgan bo'lishi kerak.
+        self.assertFalse((Path(self.tmp) / 'video-normalized.webm').exists())
+
+    def test_normalize_webm_single_segment_returns_same_path(self):
+        """Oddiy (bitta uzluksiz sessiya) fayl — o'zgarishsiz qaytadi,
+        keraksiz ffmpeg ishlov berilmaydi."""
+        from pathlib import Path
+
+        from apps.live.services import _normalize_webm
+
+        video_path = Path(self.tmp) / 'video.webm'
+        self._make_test_video(video_path)
+        result = _normalize_webm(video_path)
+        self.assertEqual(result, video_path)
+
+    def test_normalize_webm_multi_segment_becomes_seekable(self):
+        """`_normalize_webm`ni to'g'ridan-to'g'ri sinash: ikkita mustaqil
+        WebM segmentini xom ulagandan keyin, ikkinchi segment ichiga
+        qidirish (seek) muvaffaqiyatli va bo'sh bo'lmagan natija berishi
+        kerak — production'da aynan shu qidiruv "qotib qolgan" edi."""
+        import subprocess
+        from pathlib import Path
+
+        from apps.live.services import _normalize_webm
+
+        seg1 = Path(self.tmp) / 'seg1.webm'
+        seg2 = Path(self.tmp) / 'seg2.webm'
+        self._make_test_video(seg1)
+        self._make_test_video(seg2)
+        video_path = Path(self.tmp) / 'video.webm'
+        video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
+
+        result = _normalize_webm(video_path)
+        self.assertNotEqual(result, video_path)
+        self.assertTrue(result.exists())
+
+        # Har segment ~1s — 1.5s ga qidirish ikkinchi segment ichiga tushadi.
+        seek_output = Path(self.tmp) / 'seek_check.webm'
+        seek_result = subprocess.run([
+            'ffmpeg', '-y', '-ss', '1.5', '-i', str(result), '-t', '0.3',
+            '-c', 'copy', str(seek_output),
+        ], capture_output=True, timeout=30)
+        self.assertEqual(seek_result.returncode, 0, seek_result.stderr)
+        self.assertTrue(seek_output.exists())
+        self.assertGreater(seek_output.stat().st_size, 0)
+
     def test_merge_recording_failure_marks_failed(self):
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
@@ -965,6 +1047,32 @@ class AudioChunkUploadTests(APITestCase):
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
         self.assertEqual(recording.file_name, 'audio.webm')
+
+    def test_finalize_single_side_normalizes_multi_segment_video(self):
+        """Merge bo'lmasa ham (ikkinchi tomon umuman kelmagan) yagona
+        tomon ko'p-segmentli bo'lishi mumkin — shu yerda ham to'g'rilanishi
+        kerak, aks holda qidirish/pauza qotib qolardi."""
+        from pathlib import Path
+
+        from apps.live.services import finalize_single_side
+
+        seg1 = Path(self.tmp) / 'vseg1.webm'
+        seg2 = Path(self.tmp) / 'vseg2.webm'
+        self._make_test_video(seg1)
+        self._make_test_video(seg2)
+        video_path = Path(self.tmp) / 'video.webm'
+        video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
+
+        recording = self.LessonRecording.objects.create(
+            lesson=self.lesson,
+            video_file_name='video.webm', video_ready_at=timezone.now(),
+            status=self.LessonRecording.Status.RECORDING,
+        )
+        finalize_single_side(self.lesson.id)
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
+        self.assertEqual(recording.file_name, 'video-normalized.webm')
+        self.assertTrue((Path(self.tmp) / recording.file_name).exists())
 
     def test_only_teacher_can_upload_video_chunk(self):
         chunk = self.SimpleUploadedFile('c.webm', b'\x00' * 100, content_type='video/webm')

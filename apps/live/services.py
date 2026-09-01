@@ -594,13 +594,88 @@ def finalize_single_side(lesson_id) -> None:
     path = settings.RECORDINGS_DIR / source
     if not path.exists():
         return
+    # Merge bo'lmasa ham (yagona tomon) ko'p-segmentli fayl bo'lishi mumkin
+    # — u qidirish/pauzada qotib qolmasin deb shu yerda ham to'g'rilanadi.
+    normalized_path = _normalize_webm(path)
+    file_name = normalized_path.name
     updated = LessonRecording.objects.filter(
         pk=recording.pk, status=LessonRecording.Status.RECORDING,
-    ).update(file_name=source, status=LessonRecording.Status.COMPLETED)
+    ).update(file_name=file_name, status=LessonRecording.Status.COMPLETED)
     if updated:
         logging.getLogger('apps').info('recording %s finalized %s', recording.pk, label)
         recording.refresh_from_db()
         _announce_recording_ready(recording)
+
+
+_EBML_MAGIC = b'\x1a\x45\xdf\xa3'
+
+
+def _find_ebml_segment_offsets(data: bytes) -> list[int]:
+    """Faylda nechta mustaqil EBML (WebM) hujjat borligini bayt
+    offsetlari bo'yicha topadi. Odatda faqat bitta (0-offsetda)."""
+    positions = []
+    start = 0
+    while True:
+        idx = data.find(_EBML_MAGIC, start)
+        if idx == -1:
+            break
+        positions.append(idx)
+        start = idx + 1
+    return positions
+
+
+def _normalize_webm(path):
+    """Brauzer tarmoq uzilib-ulanganda yoki ekran ulashish o'chirib-
+    yoqilganda MediaRecorder sessiyasi qayta boshlanadi — natijada bir
+    nechta MUSTAQIL WebM hujjati serverda xom baytlarda ketma-ket
+    ulanib qoladi (`upload_recording_video_chunk`/`..._audio_chunk`
+    shunchaki 'ab' bilan qo'shib boradi). ffmpeg esa BITTA Segment
+    kutadi: ikkinchi hujjatdan keyingi qism vaqt belgisi buzilgan holda
+    o'qiladi (production'da topilgan xato: 6 daqiqalik yozuvdan atigi
+    ~30 soniyasi tiklangan, undan keyingi joyga o'tish esa umuman
+    ishlamagan). Shu sababli bunday fayllarni ffmpeg'ning `concat`
+    demuxeri bilan alohida-alohida, vaqt belgisini to'g'ri moslab
+    qayta ulaymiz. Bitta hujjatli (normal) fayllarga tegilmaydi —
+    o'zgarishsiz qaytariladi."""
+    import logging
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    if not path.exists():
+        return path
+
+    data = path.read_bytes()
+    offsets = _find_ebml_segment_offsets(data)
+    if len(offsets) <= 1:
+        return path
+
+    bounds = offsets + [len(data)]
+    normalized_path = path.with_name(f'{path.stem}-normalized{path.suffix}')
+    with tempfile.TemporaryDirectory(dir=settings.RECORDINGS_DIR) as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        segment_paths = []
+        for i in range(len(offsets)):
+            segment_path = tmp_dir_path / f'segment-{i}.webm'
+            segment_path.write_bytes(data[bounds[i]:bounds[i + 1]])
+            segment_paths.append(segment_path)
+
+        list_path = tmp_dir_path / 'list.txt'
+        list_path.write_text(''.join(f"file '{p.resolve()}'\n" for p in segment_paths))
+
+        cmd = [
+            'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', str(list_path),
+            '-c', 'copy', '-cues_to_front', '1', str(normalized_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+    if result.returncode != 0 or not normalized_path.exists():
+        logging.getLogger('apps').error(
+            'webm normalize failed for %s (%d segments): %s',
+            path.name, len(offsets), result.stderr[-500:],
+        )
+        return path
+    return normalized_path
 
 
 def _merge_recording(recording_pk) -> None:
@@ -612,11 +687,13 @@ def _merge_recording(recording_pk) -> None:
     currently supported in container", chiqish fayli umuman
     yaratilmagan edi).
 
-    `-fflags +genpts` audio kirishida qo'shimcha himoya — brauzer audio
-    faylini bo'lak-bo'lak (bir nechta alohida MediaRecorder seansi) yozib
-    yuborganda, har seans o'z vaqtini noldan boshlashi mumkin va bu
-    ulanish nuqtalarida vaqt belgisi orqaga qaytib qoladi; bu bayroq
-    buni silliqlab, muxer ogohlantirish bilan davom etishini ta'minlaydi."""
+    Har ikkala kirish ham avval `_normalize_webm` orqali o'tkaziladi —
+    ko'p-segmentli (qayta ulangan sessiya) fayllarni to'g'rilaydi, aks
+    holda natija faylning keyingi qismida qidirish/pauza qotib qolardi.
+
+    `-fflags +genpts` qo'shimcha himoya — kichik, segment ichidagi vaqt
+    tebranishlarini silliqlaydi. `-cues_to_front 1` chiqish faylini
+    boshidanoq qidirish mumkin (seekable) qiladi."""
     import logging
     import subprocess
     import uuid as _uuid
@@ -625,10 +702,17 @@ def _merge_recording(recording_pk) -> None:
 
     from apps.lessons.models import LessonRecording
 
+    normalized_paths = []
     try:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
-        video_path = settings.RECORDINGS_DIR / recording.video_file_name
-        audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
+        video_path = _normalize_webm(settings.RECORDINGS_DIR / recording.video_file_name)
+        audio_path = _normalize_webm(settings.RECORDINGS_DIR / recording.audio_file_name)
+        raw_video_path = settings.RECORDINGS_DIR / recording.video_file_name
+        raw_audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
+        if video_path != raw_video_path:
+            normalized_paths.append(video_path)
+        if audio_path != raw_audio_path:
+            normalized_paths.append(audio_path)
         # .webm, .mp4 EMAS — brauzer kamerasi VP8 (yoki VP9) kodlaydi, va
         # VP8/VP9 MP4 konteynerida UMUMAN qo'llab-quvvatlanmaydi
         # (production'da topilgan xato: "Could not find tag for codec vp8
@@ -648,11 +732,11 @@ def _merge_recording(recording_pk) -> None:
 
         cmd = [
             'ffmpeg', '-y',
-            '-itsoffset', f'{video_offset:.3f}', '-i', str(video_path),
-            '-fflags', '+genpts',
-            '-itsoffset', f'{audio_offset:.3f}', '-i', str(audio_path),
+            '-itsoffset', f'{video_offset:.3f}', '-fflags', '+genpts', '-i', str(video_path),
+            '-itsoffset', f'{audio_offset:.3f}', '-fflags', '+genpts', '-i', str(audio_path),
             '-map', '0:v:0', '-map', '1:a:0',
             '-c:v', 'copy', '-c:a', 'copy',
+            '-cues_to_front', '1',
             '-shortest', str(output_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -673,6 +757,8 @@ def _merge_recording(recording_pk) -> None:
             status=LessonRecording.Status.FAILED, error=str(exc)[:500],
         )
     finally:
+        for normalized_path in normalized_paths:
+            normalized_path.unlink(missing_ok=True)
         close_old_connections()
 
 
