@@ -647,6 +647,15 @@ def _normalize_webm(path, stream_type: str):
     tayanadi. Bitta hujjatli (normal) fayllarga tegilmaydi —
     o'zgarishsiz qaytariladi.
 
+    Yana bir DIQQAT (production'da topilgan, 2026-09-01): `1A45DFA3`
+    baytlari siqilgan video ma'lumotlari ICHIDA ham TASODIFAN uchrashi
+    mumkin — bu haqiqiy segment chegarasi emas, va shu nomzoddan
+    bo'lingan qism mustaqil EBML hujjat sifatida ochilmaydi ("EBML
+    header parsing failed"). Shuning uchun har bir nomzod (birinchisidan
+    tashqari) ffprobe bilan haqiqatan mustaqil WebM sifatida
+    ochilishi tasdiqlanadi; soxtasi oldingi segmentga qo'shib
+    yuboriladi (bo'linish nuqtasi sifatida e'tiborga olinmaydi).
+
     `stream_type` — 'v' (video, VP8ga qayta kodlanadi) yoki 'a'
     (audio, Opusga qayta kodlanadi)."""
     import logging
@@ -658,14 +667,32 @@ def _normalize_webm(path, stream_type: str):
         return path
 
     data = path.read_bytes()
-    offsets = _find_ebml_segment_offsets(data)
-    if len(offsets) <= 1:
+    raw_offsets = _find_ebml_segment_offsets(data)
+    if len(raw_offsets) <= 1:
         return path
 
-    bounds = offsets + [len(data)]
+    raw_bounds = raw_offsets + [len(data)]
     normalized_path = path.with_name(f'{path.stem}-normalized{path.suffix}')
     with tempfile.TemporaryDirectory(dir=settings.RECORDINGS_DIR) as tmp_dir:
         tmp_dir_path = Path(tmp_dir)
+
+        offsets = [raw_offsets[0]]
+        for i in range(1, len(raw_offsets)):
+            candidate_path = tmp_dir_path / f'candidate-{i}.webm'
+            candidate_path.write_bytes(data[raw_offsets[i]:raw_bounds[i + 1]])
+            probe = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=format_name',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', str(candidate_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            candidate_path.unlink()
+            if probe.returncode == 0 and 'matroska' in probe.stdout.lower():
+                offsets.append(raw_offsets[i])
+
+        if len(offsets) <= 1:
+            return path
+
+        bounds = offsets + [len(data)]
         segment_paths = []
         for i in range(len(offsets)):
             segment_path = tmp_dir_path / f'segment-{i}.webm'

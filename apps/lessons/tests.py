@@ -965,6 +965,29 @@ class AudioChunkUploadTests(APITestCase):
         # Vaqtinchalik normalizatsiya fayli o'chirilgan bo'lishi kerak.
         self.assertFalse((Path(self.tmp) / 'video-normalized.webm').exists())
 
+    def test_normalize_webm_ignores_false_positive_ebml_magic_in_payload(self):
+        """Production'da topilgan xato (2026-09-01): `1A45DFA3` baytlari
+        siqilgan video ma'lumotlari ICHIDA tasodifan ham uchrashi mumkin.
+        Bunday soxta moslikni haqiqiy segment chegarasi deb bo'lib
+        yuborilsa, ffmpeg uni EBML sifatida ochaolmay ("EBML header
+        parsing failed") butun normalizatsiyani ishdan chiqargan edi.
+        Har nomzod ffprobe bilan tasdiqlanishi kerak — yaroqsizi
+        e'tiborga olinmasligi kerak."""
+        from pathlib import Path
+
+        from apps.live.services import _EBML_MAGIC, _normalize_webm
+
+        video_path = Path(self.tmp) / 'video.webm'
+        self._make_test_video(video_path)
+        real_bytes = video_path.read_bytes()
+        mid = len(real_bytes) // 2
+        # Haqiqiy oqim o'rtasiga EBML "sarlavhasi"ga o'xshab boshlanadigan,
+        # lekin aslida yaroqsiz baytlar qo'shamiz — soxta moslik taqlidi.
+        video_path.write_bytes(real_bytes[:mid] + _EBML_MAGIC + b'\xff' * 200 + real_bytes[mid:])
+
+        result = _normalize_webm(video_path, 'v')
+        self.assertEqual(result, video_path)
+
     def test_normalize_webm_single_segment_returns_same_path(self):
         """Oddiy (bitta uzluksiz sessiya) fayl — o'zgarishsiz qaytadi,
         keraksiz ffmpeg ishlov berilmaydi."""
