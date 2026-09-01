@@ -586,9 +586,9 @@ def finalize_single_side(lesson_id) -> None:
     if recording is None:
         return
     if recording.video_file_name and not recording.audio_file_name:
-        source, label = recording.video_file_name, "video-only (audio yo'q)"
+        source, label, stream_type = recording.video_file_name, "video-only (audio yo'q)", 'v'
     elif recording.audio_file_name and not recording.video_file_name:
-        source, label = recording.audio_file_name, "audio-only (video yo'q)"
+        source, label, stream_type = recording.audio_file_name, "audio-only (video yo'q)", 'a'
     else:
         return
     path = settings.RECORDINGS_DIR / source
@@ -596,7 +596,7 @@ def finalize_single_side(lesson_id) -> None:
         return
     # Merge bo'lmasa ham (yagona tomon) ko'p-segmentli fayl bo'lishi mumkin
     # — u qidirish/pauzada qotib qolmasin deb shu yerda ham to'g'rilanadi.
-    normalized_path = _normalize_webm(path)
+    normalized_path = _normalize_webm(path, stream_type)
     file_name = normalized_path.name
     updated = LessonRecording.objects.filter(
         pk=recording.pk, status=LessonRecording.Status.RECORDING,
@@ -624,7 +624,7 @@ def _find_ebml_segment_offsets(data: bytes) -> list[int]:
     return positions
 
 
-def _normalize_webm(path):
+def _normalize_webm(path, stream_type: str):
     """Brauzer tarmoq uzilib-ulanganda yoki ekran ulashish o'chirib-
     yoqilganda MediaRecorder sessiyasi qayta boshlanadi — natijada bir
     nechta MUSTAQIL WebM hujjati serverda xom baytlarda ketma-ket
@@ -633,10 +633,22 @@ def _normalize_webm(path):
     kutadi: ikkinchi hujjatdan keyingi qism vaqt belgisi buzilgan holda
     o'qiladi (production'da topilgan xato: 6 daqiqalik yozuvdan atigi
     ~30 soniyasi tiklangan, undan keyingi joyga o'tish esa umuman
-    ishlamagan). Shu sababli bunday fayllarni ffmpeg'ning `concat`
-    demuxeri bilan alohida-alohida, vaqt belgisini to'g'ri moslab
-    qayta ulaymiz. Bitta hujjatli (normal) fayllarga tegilmaydi —
-    o'zgarishsiz qaytariladi."""
+    ishlamagan).
+
+    DIQQAT: `-f concat` DEMUXERI bilan (`-c copy`) sinalgan edi, lekin
+    ishonchsiz chiqdi — Cues'siz (indekssiz) WebM bo'laklarining o'z
+    ichidagi davomiyligiga ishonib, KEYINGI segmentni jimgina tashlab
+    yuboradi (production'da topilgan xato, 2026-09-01: 5:43 daqiqalik
+    videodan atigi 37 soniyasi qoldi, xatosiz "muvaffaqiyatli"
+    chiqqan holda). Shuning uchun `concat` FILTRI ishlatiladi — u
+    dekodlab-qayta kodlaydi (sekinroq, lekin faqat shu KAMDAN-KAM
+    ko'p-segmentli holatda ishlaydi), konteyner darajasidagi
+    (ishonchsiz) davomiylikka emas, haqiqiy dekodlangan kadrlarga
+    tayanadi. Bitta hujjatli (normal) fayllarga tegilmaydi —
+    o'zgarishsiz qaytariladi.
+
+    `stream_type` — 'v' (video, VP8ga qayta kodlanadi) yoki 'a'
+    (audio, Opusga qayta kodlanadi)."""
     import logging
     import subprocess
     import tempfile
@@ -660,14 +672,26 @@ def _normalize_webm(path):
             segment_path.write_bytes(data[bounds[i]:bounds[i + 1]])
             segment_paths.append(segment_path)
 
-        list_path = tmp_dir_path / 'list.txt'
-        list_path.write_text(''.join(f"file '{p.resolve()}'\n" for p in segment_paths))
+        n = len(segment_paths)
+        inputs = []
+        for segment_path in segment_paths:
+            inputs += ['-i', str(segment_path)]
+
+        if stream_type == 'v':
+            stream_refs = ''.join(f'[{i}:v]' for i in range(n))
+            filter_complex = f'{stream_refs}concat=n={n}:v=1:a=0[out]'
+            codec_args = ['-map', '[out]', '-c:v', 'libvpx', '-b:v', '1500k']
+        else:
+            stream_refs = ''.join(f'[{i}:a]' for i in range(n))
+            filter_complex = f'{stream_refs}concat=n={n}:v=0:a=1[out]'
+            codec_args = ['-map', '[out]', '-c:a', 'libopus', '-b:a', '128k']
 
         cmd = [
-            'ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', str(list_path),
-            '-c', 'copy', '-cues_to_front', '1', str(normalized_path),
+            'ffmpeg', '-y', *inputs,
+            '-filter_complex', filter_complex,
+            *codec_args, '-cues_to_front', '1', str(normalized_path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
     if result.returncode != 0 or not normalized_path.exists():
         logging.getLogger('apps').error(
@@ -705,8 +729,8 @@ def _merge_recording(recording_pk) -> None:
     normalized_paths = []
     try:
         recording = LessonRecording.objects.select_related('lesson').get(pk=recording_pk)
-        video_path = _normalize_webm(settings.RECORDINGS_DIR / recording.video_file_name)
-        audio_path = _normalize_webm(settings.RECORDINGS_DIR / recording.audio_file_name)
+        video_path = _normalize_webm(settings.RECORDINGS_DIR / recording.video_file_name, 'v')
+        audio_path = _normalize_webm(settings.RECORDINGS_DIR / recording.audio_file_name, 'a')
         raw_video_path = settings.RECORDINGS_DIR / recording.video_file_name
         raw_audio_path = settings.RECORDINGS_DIR / recording.audio_file_name
         if video_path != raw_video_path:

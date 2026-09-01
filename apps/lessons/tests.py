@@ -930,8 +930,14 @@ class AudioChunkUploadTests(APITestCase):
         self._make_test_video(seg2)
         video_path = Path(self.tmp) / 'video.webm'
         video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
+        # Audio ham ~2s bo'lsin — aks holda `-shortest` 1s'li audioga qarab
+        # video tomonidagi (2-segment saqlanganmi) tekshiruvni yashirib qo'yardi.
+        aseg1 = Path(self.tmp) / 'aseg1.webm'
+        aseg2 = Path(self.tmp) / 'aseg2.webm'
+        self._make_test_audio(aseg1)
+        self._make_test_audio(aseg2)
         audio_path = Path(self.tmp) / 'audio.webm'
-        self._make_test_audio(audio_path)
+        audio_path.write_bytes(aseg1.read_bytes() + aseg2.read_bytes())
 
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
@@ -947,6 +953,15 @@ class AudioChunkUploadTests(APITestCase):
         output_path = Path(self.tmp) / recording.file_name
         self.assertTrue(output_path.exists())
         self.assertGreater(output_path.stat().st_size, 0)
+
+        import subprocess
+        probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', str(output_path),
+        ], capture_output=True, text=True, timeout=30)
+        # Ikkala ~1s video segment ham saqlanishi kerak — faqat birinchisi
+        # qolsa (production regressiyasi) ~1s chiqardi.
+        self.assertGreater(float(probe.stdout.strip()), 1.5, probe.stdout)
         # Vaqtinchalik normalizatsiya fayli o'chirilgan bo'lishi kerak.
         self.assertFalse((Path(self.tmp) / 'video-normalized.webm').exists())
 
@@ -959,14 +974,22 @@ class AudioChunkUploadTests(APITestCase):
 
         video_path = Path(self.tmp) / 'video.webm'
         self._make_test_video(video_path)
-        result = _normalize_webm(video_path)
+        result = _normalize_webm(video_path, 'v')
         self.assertEqual(result, video_path)
 
-    def test_normalize_webm_multi_segment_becomes_seekable(self):
+    def test_normalize_webm_multi_segment_keeps_full_duration_and_seeks(self):
         """`_normalize_webm`ni to'g'ridan-to'g'ri sinash: ikkita mustaqil
-        WebM segmentini xom ulagandan keyin, ikkinchi segment ichiga
-        qidirish (seek) muvaffaqiyatli va bo'sh bo'lmagan natija berishi
-        kerak — production'da aynan shu qidiruv "qotib qolgan" edi."""
+        WebM segmentini xom ulagandan keyin, IKKALASI ham chiqishda
+        saqlanishi va ikkinchi segment ichiga qidirish (seek)
+        muvaffaqiyatli bo'lishi kerak.
+
+        Production'da topilgan xato (2026-09-01): `concat` DEMUXERI
+        (`-c copy`) bilan ishlaganda, ikkinchi (kattaroq) segment
+        ffmpeg tomonidan XATOSIZ, lekin JIMGINA tashlab yuborilgan
+        edi — 5:43 daqiqalik yozuvdan atigi 37 soniyasi qolgan.
+        Shuning uchun bu yerda nafaqat seek, balki YAKUNIY DAVOMIYLIK
+        ham (ikkala segment yig'indisiga yaqin) tekshiriladi — aks
+        holda xuddi shu regressiya sezilmasdan qolardi."""
         import subprocess
         from pathlib import Path
 
@@ -979,11 +1002,21 @@ class AudioChunkUploadTests(APITestCase):
         video_path = Path(self.tmp) / 'video.webm'
         video_path.write_bytes(seg1.read_bytes() + seg2.read_bytes())
 
-        result = _normalize_webm(video_path)
+        result = _normalize_webm(video_path, 'v')
         self.assertNotEqual(result, video_path)
         self.assertTrue(result.exists())
 
-        # Har segment ~1s — 1.5s ga qidirish ikkinchi segment ichiga tushadi.
+        probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', str(result),
+        ], capture_output=True, text=True, timeout=30)
+        duration = float(probe.stdout.strip())
+        # Har segment ~1s — ikkalasi ham saqlangan bo'lsa jami ~2s bo'lishi
+        # kerak. Faqat birinchisi qolsa (production regressiyasi) ~1s chiqardi.
+        self.assertGreater(duration, 1.5, probe.stdout)
+
+        # Ikkinchi segment ichiga (~1.5s) qidirish muvaffaqiyatli, bo'sh
+        # bo'lmagan natija berishi kerak.
         seek_output = Path(self.tmp) / 'seek_check.webm'
         seek_result = subprocess.run([
             'ffmpeg', '-y', '-ss', '1.5', '-i', str(result), '-t', '0.3',
@@ -1072,7 +1105,17 @@ class AudioChunkUploadTests(APITestCase):
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.COMPLETED)
         self.assertEqual(recording.file_name, 'video-normalized.webm')
-        self.assertTrue((Path(self.tmp) / recording.file_name).exists())
+        output_path = Path(self.tmp) / recording.file_name
+        self.assertTrue(output_path.exists())
+
+        import subprocess
+        probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', str(output_path),
+        ], capture_output=True, text=True, timeout=30)
+        # Ikkala ~1s segment ham saqlanishi kerak — faqat birinchisi
+        # qolsa (production regressiyasi) ~1s chiqardi.
+        self.assertGreater(float(probe.stdout.strip()), 1.5, probe.stdout)
 
     def test_only_teacher_can_upload_video_chunk(self):
         chunk = self.SimpleUploadedFile('c.webm', b'\x00' * 100, content_type='video/webm')
