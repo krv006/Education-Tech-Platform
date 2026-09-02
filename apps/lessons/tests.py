@@ -1381,7 +1381,11 @@ class JoinQueueTests(APITestCase):
         resp = self.api(self.students[7]).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
         self.assertEqual(resp.data['join_delay_ms'], 1200)
 
-    def test_different_lessons_have_independent_queues(self):
+    def test_different_lessons_share_one_global_queue(self):
+        """Navbat DARS bo'yicha emas — butun server uchun BITTA (global).
+        Sabab: 150 ta turli dars bir vaqtda boshlansa ham, jami parallel
+        ulanish sonini cheklash kerak, dars qaysi bo'lishidan qat'iy
+        nazar (izohga qarang, `_compute_join_delay_ms`)."""
         from django.utils import timezone
 
         from .models import Course, Enrollment, Lesson
@@ -1394,12 +1398,12 @@ class JoinQueueTests(APITestCase):
             course=other_course, title='L2', starts_at=timezone.now(), duration_min=45,
             status=Lesson.Status.LIVE,
         )
-        # Birinchi darsda navbatni to'ldiramiz (7-o'quvchi kechikadi).
+        # Birinchi darsda navbatni to'ldiramiz (global hisoblagich 6ga yetadi).
         for s in self.students[:6]:
             self.api(s).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
-        # Boshqa darsga BIRINCHI kiruvchi — o'z navbatida, kechikmaydi.
+        # BOSHQA darsga kiruvchi ham xuddi shu global navbatda — kechikadi.
         resp = self.api(self.students[0]).post('/api/v1/live/token/', {'lesson_id': str(other_lesson.id)})
-        self.assertEqual(resp.data['join_delay_ms'], 0)
+        self.assertEqual(resp.data['join_delay_ms'], 1200)
 
 
 class MicPermissionTests(APITestCase):

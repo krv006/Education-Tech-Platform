@@ -23,21 +23,35 @@ ATTENTION_GRACE_SEC = 8    # tarmoq kechikishi uchun qo'shimcha imkon
 # CPU 5-8x portlaydi (har biri ICE/DTLS muzokarasini bir vaqtda boshlaydi).
 # Bir vaqtda faqat _JOIN_QUEUE_BATCH_SIZE kishi ulansa, portlash deyarli
 # yo'qoladi (sinovda: ~520% -> ~180%, ya'ni deyarli barqaror holat darajasi).
+#
+# DIQQAT: navbat DARS bo'yicha EMAS — butun server uchun BITTA (global).
+# Sabab: LiveKit CPU'siga bitta darsning o'z ichidagi ulanishlari HAM,
+# turli darslarning bir vaqtda boshlanishi HAM (masalan hammasi soat
+# 18:00da) bir xil ta'sir qiladi — muhimi jami parallel muzokaralar soni,
+# qaysi darsga tegishli ekani emas. Lesson-bo'yicha alohida navbat bitta
+# darsni yaxshi silliqlaydi, lekin 150 ta TURLI dars bir vaqtda
+# boshlansa, har birining BIRINCHI partiyasi baribir ustma-ust tushib
+# qolar edi — global kalit buni ham qamrab oladi.
 _JOIN_QUEUE_WINDOW_SECONDS = 15  # shu vaqt jim tursa navbat o'zi nolga qaytadi
 _JOIN_QUEUE_BATCH_SIZE = 6
 _JOIN_QUEUE_BATCH_INTERVAL_MS = 1200
-_JOIN_QUEUE_MAX_DELAY_MS = 8000  # bitta o'quvchi bundan uzoq kutmasin
+# Global navbatda kutish safi ancha uzunroq bo'lishi mumkin (ko'p dars bir
+# vaqtda boshlansa) — shuning uchun chegara lesson-bo'yicha versiyadan
+# kengroq (aks holda chegaraga tirbandlik hosil bo'lib, o'sha nuqtada
+# yangi kichik portlash yasaladi).
+_JOIN_QUEUE_MAX_DELAY_MS = 20_000
 
 
-def _compute_join_delay_ms(lesson_id) -> int:
-    """FIFO navbat pozitsiyasini hisoblaydi: kim OLDIN so'rasa, kichikroq
-    pozitsiya oladi (Django keshining atomik `incr()`i — Redis'da bu
-    haqiqatan atomik, poyga holati yo'q). Pozitsiya `_JOIN_QUEUE_BATCH_SIZE`
-    kishilik partiyalarga bo'linadi, har partiya oldingisidan
+def _compute_join_delay_ms() -> int:
+    """FIFO navbat pozitsiyasini hisoblaydi (BUTUN SERVER bo'yicha, dars
+    farqlanmaydi): kim OLDIN so'rasa, kichikroq pozitsiya oladi (Django
+    keshining atomik `incr()`i — Redis'da bu haqiqatan atomik, poyga
+    holati yo'q). Pozitsiya `_JOIN_QUEUE_BATCH_SIZE` kishilik
+    partiyalarga bo'linadi, har partiya oldingisidan
     `_JOIN_QUEUE_BATCH_INTERVAL_MS` keyin ulanadi. Kalit o'zi
-    `_JOIN_QUEUE_WINDOW_SECONDS` jim turgach eskiradi — portlashsiz, kam-kam
-    kelayotgan so'rovlarga deyarli tegilmaydi."""
-    key = f'live:join_queue:{lesson_id}'
+    `_JOIN_QUEUE_WINDOW_SECONDS` jim turgach eskiradi — portlashsiz,
+    kam-kam kelayotgan so'rovlarga deyarli tegilmaydi."""
+    key = 'live:join_queue:global'
     try:
         position = cache.incr(key)
     except ValueError:
@@ -107,7 +121,7 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
 
     audit.record(action='room.join', actor=user, target=lesson, request=request)
     # O'qituvchi hech qachon kutmaydi — dars boshlanishi kechikmasin.
-    join_delay_ms = 0 if is_teacher else _compute_join_delay_ms(lesson.id)
+    join_delay_ms = 0 if is_teacher else _compute_join_delay_ms()
     return {
         'token': token.to_jwt(),
         'url': settings.LIVEKIT_URL,
