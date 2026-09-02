@@ -4,6 +4,7 @@ import random
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 from livekit.api import AccessToken, LiveKitAPI, UpdateParticipantRequest, VideoGrants
 from livekit.protocol.models import ParticipantPermission, TrackSource
@@ -16,6 +17,34 @@ from apps.lessons.models import AttentionCheck, Enrollment, FocusAlert, FocusEve
 
 ATTENTION_WINDOW_SEC = 15  # popup ekranda turadigan vaqt (EduTech.docx)
 ATTENTION_GRACE_SEC = 8    # tarmoq kechikishi uchun qo'shimcha imkon
+
+# Ulanish navbati (FIFO, cheklangan parallellik) — production'da o'lchangan
+# (2026-09-02): bir darsga qisqa vaqt ichida ko'p o'quvchi ulansa, LiveKit'da
+# CPU 5-8x portlaydi (har biri ICE/DTLS muzokarasini bir vaqtda boshlaydi).
+# Bir vaqtda faqat _JOIN_QUEUE_BATCH_SIZE kishi ulansa, portlash deyarli
+# yo'qoladi (sinovda: ~520% -> ~180%, ya'ni deyarli barqaror holat darajasi).
+_JOIN_QUEUE_WINDOW_SECONDS = 15  # shu vaqt jim tursa navbat o'zi nolga qaytadi
+_JOIN_QUEUE_BATCH_SIZE = 6
+_JOIN_QUEUE_BATCH_INTERVAL_MS = 1200
+_JOIN_QUEUE_MAX_DELAY_MS = 8000  # bitta o'quvchi bundan uzoq kutmasin
+
+
+def _compute_join_delay_ms(lesson_id) -> int:
+    """FIFO navbat pozitsiyasini hisoblaydi: kim OLDIN so'rasa, kichikroq
+    pozitsiya oladi (Django keshining atomik `incr()`i — Redis'da bu
+    haqiqatan atomik, poyga holati yo'q). Pozitsiya `_JOIN_QUEUE_BATCH_SIZE`
+    kishilik partiyalarga bo'linadi, har partiya oldingisidan
+    `_JOIN_QUEUE_BATCH_INTERVAL_MS` keyin ulanadi. Kalit o'zi
+    `_JOIN_QUEUE_WINDOW_SECONDS` jim turgach eskiradi — portlashsiz, kam-kam
+    kelayotgan so'rovlarga deyarli tegilmaydi."""
+    key = f'live:join_queue:{lesson_id}'
+    try:
+        position = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=_JOIN_QUEUE_WINDOW_SECONDS)
+        position = 1
+    delay_ms = ((position - 1) // _JOIN_QUEUE_BATCH_SIZE) * _JOIN_QUEUE_BATCH_INTERVAL_MS
+    return min(delay_ms, _JOIN_QUEUE_MAX_DELAY_MS)
 
 
 def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
@@ -77,11 +106,14 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         _ensure_attention_schedule(lesson=lesson, student=user)
 
     audit.record(action='room.join', actor=user, target=lesson, request=request)
+    # O'qituvchi hech qachon kutmaydi — dars boshlanishi kechikmasin.
+    join_delay_ms = 0 if is_teacher else _compute_join_delay_ms(lesson.id)
     return {
         'token': token.to_jwt(),
         'url': settings.LIVEKIT_URL,
         'room': lesson.room_name,
         'is_teacher': is_teacher,
+        'join_delay_ms': join_delay_ms,
     }
 
 

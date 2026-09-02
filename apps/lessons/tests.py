@@ -1322,6 +1322,86 @@ class InviteBanTests(APITestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class JoinQueueTests(APITestCase):
+    """Ulanish navbati (FIFO, cheklangan parallellik) — production'da
+    o'lchangan (2026-09-02): bir darsga qisqa vaqt ichida ko'p o'quvchi
+    ulansa, LiveKit'da CPU 5-8x portlaydi. Server har o'quvchiga
+    `join_delay_ms` qaytaradi — frontend shuncha kutib, keyin ulanadi."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        from django.utils import timezone
+
+        from apps.accounts.models import User
+
+        from .models import Course, Enrollment, Lesson
+
+        cache.clear()
+
+        def mk(username, role):
+            u = User(username=username, role=role)
+            u.set_password('x')
+            u.save()
+            return u
+
+        self.teacher = mk('jq_t', User.Role.TEACHER)
+        self.students = [mk(f'jq_s{i}', User.Role.STUDENT) for i in range(8)]
+        self.course = Course.objects.create(teacher=self.teacher, title='JQ')
+        for s in self.students:
+            Enrollment.objects.create(course=self.course, student=s, status=Enrollment.Status.APPROVED)
+        self.lesson = Lesson.objects.create(
+            course=self.course, title='L', starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+
+    def api(self, user):
+        from rest_framework.test import APIClient
+
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def test_teacher_never_delayed(self):
+        resp = self.api(self.teacher).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.data['join_delay_ms'], 0)
+
+    def test_first_batch_of_students_not_delayed(self):
+        # _JOIN_QUEUE_BATCH_SIZE = 6 — birinchi 6 o'quvchi darhol kiradi.
+        for s in self.students[:6]:
+            resp = self.api(s).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+            self.assertEqual(resp.data['join_delay_ms'], 0)
+
+    def test_next_batch_is_delayed_by_one_interval(self):
+        for s in self.students[:6]:
+            self.api(s).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        # 7-o'quvchi — keyingi partiya, +1 interval kutadi.
+        resp = self.api(self.students[6]).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.data['join_delay_ms'], 1200)
+        # 8-o'quvchi ham xuddi shu (hali ikkinchi partiya) partiyada.
+        resp = self.api(self.students[7]).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(resp.data['join_delay_ms'], 1200)
+
+    def test_different_lessons_have_independent_queues(self):
+        from django.utils import timezone
+
+        from .models import Course, Enrollment, Lesson
+
+        other_course = Course.objects.create(teacher=self.teacher, title='JQ2')
+        Enrollment.objects.create(
+            course=other_course, student=self.students[0], status=Enrollment.Status.APPROVED,
+        )
+        other_lesson = Lesson.objects.create(
+            course=other_course, title='L2', starts_at=timezone.now(), duration_min=45,
+            status=Lesson.Status.LIVE,
+        )
+        # Birinchi darsda navbatni to'ldiramiz (7-o'quvchi kechikadi).
+        for s in self.students[:6]:
+            self.api(s).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
+        # Boshqa darsga BIRINCHI kiruvchi — o'z navbatida, kechikmaydi.
+        resp = self.api(self.students[0]).post('/api/v1/live/token/', {'lesson_id': str(other_lesson.id)})
+        self.assertEqual(resp.data['join_delay_ms'], 0)
+
+
 class MicPermissionTests(APITestCase):
     """Mikrofon so'rov/ruxsat: o'quvchi standart holatda mikrofonsiz kiradi,
     so'raydi ("qo'l ko'tarish"), o'qituvchi ruxsat beradi."""
