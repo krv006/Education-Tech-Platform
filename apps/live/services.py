@@ -83,10 +83,10 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):
         raise ValidationError('Dars tugagan yoki bekor qilingan.')
 
-    # O'quvchi default mikrofon va ekran share qila olmaydi — o'qituvchi
-    # ruxsat berganda grant_mic()/grant_screen_share() orqali jonli ochiladi
-    # (kamera esa erkin — faqat ovoz cheklanadi, tartib buzilmasin uchun).
-    publish_sources = None if is_teacher else ['camera']
+    # O'quvchi default mikrofon, kamera va ekran share qila olmaydi —
+    # o'qituvchi ruxsat berganda grant_mic()/grant_camera()/grant_screen_share()
+    # orqali jonli ochiladi (2026-09-04: kamera ham cheklandi, avval erkin edi).
+    publish_sources = None if is_teacher else []
     token = (
         AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
         .with_identity(f'user-{user.id}')
@@ -106,7 +106,8 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
 
     if is_teacher and lesson.status == Lesson.Status.SCHEDULED:
         lesson.status = Lesson.Status.LIVE
-        lesson.save(update_fields=['status'])
+        lesson.live_started_at = timezone.now()
+        lesson.save(update_fields=['status', 'live_started_at'])
         # Guruh chatga "jonli dars boshlandi" signali (Telegram uslubidagi
         # guruh video chat chizig'i). Xato bo'lsa ham darsga kirish to'xtamasin.
         try:
@@ -298,6 +299,128 @@ def pending_mic_requests(lesson: Lesson) -> list[dict]:
     ]
 
 
+# ── Kamera ruxsati (2026-09-04: mikrofon bilan bir xil naqsh — avval erkin edi) ──
+
+def request_camera(*, user: User, lesson_id, request=None) -> None:
+    """O'quvchi kamera so'raydi. `request_mic` bilan bir xil naqsh."""
+    try:
+        lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
+    except (Lesson.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Dars topilmadi.')
+    is_enrolled = lesson.course.enrollments.filter(
+        student=user, status=Enrollment.Status.APPROVED,
+    ).exists()
+    if not is_enrolled:
+        raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+
+    from apps.lessons.models import CameraRequest
+    CameraRequest.objects.get_or_create(lesson=lesson, student=user)
+
+    try:
+        from apps.board import realtime as board_realtime
+        board_realtime.broadcast_camera_request(
+            lesson_id, student_id=str(user.id),
+            name=user.first_name or user.username,
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('camera_request broadcast failed')
+
+    audit.record(action='room.camera_request', actor=user, target=lesson, request=request)
+
+
+def pending_camera_requests(lesson: Lesson) -> list[dict]:
+    from apps.lessons.models import CameraRequest
+
+    requests = CameraRequest.objects.filter(lesson=lesson).select_related('student')
+    return [
+        {'student_id': str(r.student_id), 'name': r.student.first_name or r.student.username}
+        for r in requests
+    ]
+
+
+def grant_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """O'qituvchi o'quvchiga kamera ruxsatini jonli ochadi — `grant_mic` bilan
+    bir xil naqsh, mavjud ruxsatlarni (mikrofon/ekran) saqlab qolib qo'shadi."""
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+
+    identity = f'user-{student.id}'
+
+    async def _update():
+        from livekit.protocol.room import RoomParticipantIdentity
+
+        client = LiveKitAPI(
+            url=_livekit_http_url(),
+            api_key=settings.LIVEKIT_API_KEY,
+            api_secret=settings.LIVEKIT_API_SECRET,
+        )
+        try:
+            info = await client.room.get_participant(RoomParticipantIdentity(
+                room=lesson.room_name, identity=identity,
+            ))
+            sources = set(info.permission.can_publish_sources) | {TrackSource.CAMERA}
+            await client.room.update_participant(UpdateParticipantRequest(
+                room=lesson.room_name,
+                identity=identity,
+                permission=ParticipantPermission(
+                    can_subscribe=True,
+                    can_publish=True,
+                    can_publish_data=True,
+                    can_publish_sources=list(sources),
+                ),
+            ))
+        finally:
+            await client.aclose()
+
+    asyncio.run(_update())
+
+    from apps.lessons.models import CameraRequest
+    CameraRequest.objects.filter(lesson=lesson, student=student).delete()
+
+    try:
+        from apps.board import realtime as board_realtime
+        board_realtime.broadcast_camera_granted(lesson_id, student_id=str(student.id))
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger('apps').exception('camera_granted broadcast failed')
+
+    audit.record(
+        action='room.grant_camera', actor=teacher, target=lesson,
+        meta={'student_id': str(student.id)}, request=request,
+    )
+    return True
+
+
+def deny_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
+    """O'qituvchi kamera so'rovini rad etadi — `deny_mic` bilan bir xil naqsh."""
+    lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
+    try:
+        student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'quvchi topilmadi.")
+
+    from apps.lessons.models import CameraRequest
+    deleted, _ = CameraRequest.objects.filter(lesson=lesson, student=student).delete()
+
+    if deleted:
+        try:
+            from apps.board import realtime as board_realtime
+            board_realtime.broadcast_camera_denied(lesson_id, student_id=str(student.id))
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('camera_denied broadcast failed')
+
+        audit.record(
+            action='room.deny_camera', actor=teacher, target=lesson,
+            meta={'student_id': str(student.id)}, request=request,
+        )
+    return bool(deleted)
+
+
 # ── Ekran share ruxsati (o'qituvchi beradi) ────────────────────────────────
 
 def _livekit_http_url() -> str:
@@ -357,7 +480,7 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
 
 def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     """O'qituvchi o'quvchiga mikrofon ruxsatini jonli ochadi (LiveKit server
-    API) — kamera va (agar oldin berilgan bo'lsa) ekran ulashish ruxsatini
+    API) — (agar oldin berilgan bo'lsa) kamera/ekran ulashish ruxsatini
     saqlab qolib, ustiga mikrofonni qo'shadi."""
     lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
     try:
@@ -383,7 +506,7 @@ def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
             info = await client.room.get_participant(RoomParticipantIdentity(
                 room=lesson.room_name, identity=identity,
             ))
-            sources = set(info.permission.can_publish_sources) | {TrackSource.CAMERA, TrackSource.MICROPHONE}
+            sources = set(info.permission.can_publish_sources) | {TrackSource.MICROPHONE}
             await client.room.update_participant(UpdateParticipantRequest(
                 room=lesson.room_name,
                 identity=identity,

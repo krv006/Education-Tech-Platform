@@ -64,6 +64,12 @@ class Lesson(TimeStampedUUIDModel, SoftDeleteModel):
     starts_at = DateTimeField(db_index=True)
     duration_min = PositiveIntegerField(default=45)
     status = CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED, db_index=True)
+    # O'qituvchi HAQIQATDA kirgan payt (apps.live.services.issue_room_token,
+    # status LIVE'ga o'tganda) — rejalashtirilgan `starts_at`dan farqli
+    # (o'qituvchi kech kirishi mumkin). auto_finish_expired_lessons muddatni
+    # shundan hisoblaydi, aks holda kech boshlangan dars darhol "tugagan"
+    # deb topilib, hali davom etayotgan safar o'rtada uzilib qolardi.
+    live_started_at = DateTimeField(null=True, blank=True)
     # LiveKit room name — unique per lesson, generated once.
     room_name = CharField(max_length=64, unique=True, editable=False)
 
@@ -258,6 +264,24 @@ class MicRequest(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} @ {self.lesson.title} [mic requested]'
+
+
+class CameraRequest(TimeStampedUUIDModel):
+    """O'quvchi kamera so'ragan, hali javob berilmagan — `MicRequest` bilan
+    bir xil naqsh (2026-09-04: kamera ham endi ruxsat bilan ochiladi, avval
+    hammaga erkin edi)."""
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='camera_requests')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='camera_requests')
+
+    class Meta:
+        ordering = ['created_at']
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_camera_request'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} [camera requested]'
 
 
 class LessonRating(TimeStampedUUIDModel):

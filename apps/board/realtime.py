@@ -44,6 +44,12 @@ def broadcast_focus(lesson_id, student_id: str, name: str, kind: str) -> None:
     _send(lesson_id, {'type': 'focus', 'student_id': student_id, 'name': name, 'kind': kind})
 
 
+def broadcast_board_granted(lesson_id, student_id: str) -> None:
+    """O'qituvchi doskaga chizish ruxsatini berdi — shu o'quvchining o'zi
+    darhol (sahifani yangilamasdan) chiza olishini bilishi uchun."""
+    _send(lesson_id, {'type': 'board_granted', 'student_id': student_id})
+
+
 def broadcast_mic_request(lesson_id, student_id: str, name: str) -> None:
     """O'quvchi mikrofon so'radi — o'qituvchiga darhol ko'rinishi uchun
     (frontend faqat is_teacher=true bo'lganda "qo'l ko'tarildi" belgisini
@@ -62,3 +68,16 @@ def broadcast_mic_denied(lesson_id, student_id: str) -> None:
     """O'qituvchi so'rovni rad etdi — o'quvchining o'zi "so'rash" tugmasini
     qayta yoqishi, o'qituvchi esa kutish ro'yxatidan olib tashlashi uchun."""
     _send(lesson_id, {'type': 'mic_denied', 'student_id': student_id})
+
+
+def broadcast_camera_request(lesson_id, student_id: str, name: str) -> None:
+    """O'quvchi kamera so'radi — `broadcast_mic_request` bilan bir xil naqsh."""
+    _send(lesson_id, {'type': 'camera_request', 'student_id': student_id, 'name': name})
+
+
+def broadcast_camera_granted(lesson_id, student_id: str) -> None:
+    _send(lesson_id, {'type': 'camera_granted', 'student_id': student_id})
+
+
+def broadcast_camera_denied(lesson_id, student_id: str) -> None:
+    _send(lesson_id, {'type': 'camera_denied', 'student_id': student_id})

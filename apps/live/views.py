@@ -113,6 +113,48 @@ class DenyMicView(APIView):
         return Response({'denied': denied})
 
 
+class RequestCameraView(APIView):
+    """O'quvchi: kamera so'rash (2026-09-04: mikrofon bilan bir xil naqsh)."""
+
+    permission_classes = [RequirePerm('room.token')]
+
+    def post(self, request):
+        services.request_camera(
+            user=request.user, lesson_id=request.data.get('lesson_id'), request=request,
+        )
+        return Response({'ok': True})
+
+
+class GrantCameraView(APIView):
+    """O'qituvchi: o'quvchiga kamera ruxsatini beradi."""
+
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        services.grant_camera(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'ok': True})
+
+
+class DenyCameraView(APIView):
+    """O'qituvchi: kamera so'rovini rad etadi."""
+
+    permission_classes = [RequirePerm('room.moderate')]
+
+    def post(self, request):
+        denied = services.deny_camera(
+            teacher=request.user,
+            lesson_id=request.data.get('lesson_id'),
+            student_id=request.data.get('student_id'),
+            request=request,
+        )
+        return Response({'denied': denied})
+
+
 class InviteView(APIView):
     """O'qituvchi: darsga taklif bildirishnomasi. `student_id` bo'lmasa — hammaga."""
 

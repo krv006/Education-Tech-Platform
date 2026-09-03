@@ -73,11 +73,12 @@ def get_board(*, user: User, lesson_id) -> dict:
     if is_teacher:
         # Diqqatsiz o'quvchilar (oynadan chiqib, hali qaytmagan) — faqat
         # o'qituvchiga, WebSocket ulanishidan oldingi holatni ham qamrab oladi
-        from apps.live.services import away_students, pending_mic_requests
+        from apps.live.services import away_students, pending_camera_requests, pending_mic_requests
         result['away_students'] = away_students(lesson)
-        # Javobsiz mikrofon so'rovlari — WebSocket'dan oldin/keyin kirsa ham
-        # (sahifa yangilansa ham) yo'qolib qolmasligi uchun
+        # Javobsiz mikrofon/kamera so'rovlari — WebSocket'dan oldin/keyin kirsa
+        # ham (sahifa yangilansa ham) yo'qolib qolmasligi uchun
         result['pending_mic_requests'] = pending_mic_requests(lesson)
+        result['pending_camera_requests'] = pending_camera_requests(lesson)
     return result
 
 
@@ -255,6 +256,9 @@ def grant_draw(*, teacher: User, lesson_id, student_id) -> bool:
         raise NotFound("O'quvchi topilmadi.")
     BoardGrant.objects.get_or_create(lesson=lesson, student=student)
     audit.record(action='board.grant', actor=teacher, target=lesson, meta={'student_id': str(student_id)})
+    # WebSocket'ga darhol xabar — aks holda o'quvchi sahifani yangilamaguncha
+    # ruxsat berilganini bilmay, chiza olmay turaverardi (2026-09-04 tuzatildi).
+    transaction.on_commit(lambda: realtime.broadcast_board_granted(lesson.id, str(student_id)))
     return True
 
 

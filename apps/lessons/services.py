@@ -328,10 +328,17 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
 
 
 def auto_finish_expired_lessons(*, now=None) -> int:
-    """Rejalashtirilgan vaqti (starts_at + duration_min) o'tib ketgan, lekin
-    hali LIVE holatda qolib ketgan darslarni avtomatik yakunlaydi — o'qituvchi
-    brauzeri yiqilib/ulanish uzilib, `lesson.finish` hech qachon chaqirilmagan
-    holatlar uchun (masalan lesson-a9371dba4a2a kabi "stuck LIVE" darslar).
+    """HAQIQIY boshlangan vaqti (live_started_at + duration_min + 30 daqiqa
+    grace) o'tib ketgan, lekin hali LIVE holatda qolib ketgan darslarni
+    avtomatik yakunlaydi — o'qituvchi brauzeri yiqilib/ulanish uzilib,
+    `lesson.finish` hech qachon chaqirilmagan holatlar uchun (masalan
+    lesson-a9371dba4a2a kabi "stuck LIVE" darslar).
+
+    DIQQAT (2026-09-04 tuzatildi): muddat REJALASHTIRILGAN `starts_at`dan
+    emas, `live_started_at`dan hisoblanadi — o'qituvchi kech kirsa (masalan
+    soat 15:00ga rejalashtirilgan, 15:45da kirgan), eski hisob-kitob darsni
+    boshlangan zahoti "tugagan" deb topib, hali davom etayotgan safar
+    o'rtada uzib qo'yardi (production'da kuzatilgan real bug).
 
     Davriy chaqirish uchun mo'ljallangan (management command + tashqi cron —
     loyihada Celery yo'q, xuddi send_deadline_reminders kabi). Video xonasi
@@ -342,7 +349,16 @@ def auto_finish_expired_lessons(*, now=None) -> int:
     finished = 0
     live_lessons = Lesson.objects.filter(status=Lesson.Status.LIVE).select_related('course', 'course__teacher')
     for lesson in live_lessons:
-        ends_at = lesson.starts_at + timedelta(minutes=lesson.duration_min)
+        if lesson.live_started_at:
+            # Haqiqiy boshlangan vaqtdan hisoblanadi (o'qituvchi kech kirgan
+            # bo'lishi mumkin) + 30 daqiqa "grace" — bu ish faqat chindan
+            # OSILIB QOLGAN darslarni tozalash uchun, hali davom etayotgan
+            # (rejalashtirilgandan uzoqroq cho'zilgan) darsni to'xtatmasin.
+            ends_at = lesson.live_started_at + timedelta(minutes=lesson.duration_min + 30)
+        else:
+            # Hech qachon jonli bo'lmagan (lekin nima uchundir LIVE holatda
+            # qolib ketgan) eski yozuvlar uchun zaxira — eski xatti-harakat.
+            ends_at = lesson.starts_at + timedelta(minutes=lesson.duration_min)
         if now < ends_at:
             continue
         finish_lesson(teacher=lesson.course.teacher, lesson=lesson)

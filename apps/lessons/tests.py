@@ -1513,11 +1513,12 @@ class MicPermissionTests(APITestCase):
 
         return jwt.decode(token, settings.LIVEKIT_API_SECRET, algorithms=['HS256'])
 
-    def test_student_token_excludes_microphone_by_default(self):
+    def test_student_token_excludes_camera_and_microphone_by_default(self):
+        """2026-09-04: kamera ham endi ruxsat bilan ochiladi (avval erkin edi)."""
         resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
         self.assertEqual(resp.status_code, 200)
         sources = self._decode(resp.data['token'])['video']['canPublishSources']
-        self.assertIn('camera', sources)
+        self.assertNotIn('camera', sources)
         self.assertNotIn('microphone', sources)
 
     def test_teacher_token_unrestricted(self):
@@ -1619,6 +1620,57 @@ class MicPermissionTests(APITestCase):
             mock_livekit_cls.assert_not_called()
 
         self.assertEqual(pending_mic_requests(self.lesson), [])
+
+    def test_request_camera_requires_enrollment(self):
+        resp = self.api(self.stranger).post(
+            '/api/v1/live/request-camera/', {'lesson_id': str(self.lesson.id)},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_grant_camera_adds_camera_source_and_clears_pending(self):
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, ParticipantPermission, TrackSource
+
+        from apps.live.services import pending_camera_requests
+
+        self.api(self.student).post('/api/v1/live/request-camera/', {'lesson_id': str(self.lesson.id)})
+        self.assertEqual(len(pending_camera_requests(self.lesson)), 1)
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.get_participant = AsyncMock(return_value=ParticipantInfo(
+                permission=ParticipantPermission(can_publish_sources=[]),
+            ))
+            mock_client.room.update_participant = AsyncMock()
+            mock_client.aclose = AsyncMock()
+
+            resp = self.api(self.teacher).post('/api/v1/live/grant-camera/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+            self.assertEqual(resp.status_code, 200)
+            call = mock_client.room.update_participant.call_args
+            sent_request = call.args[0]
+            self.assertIn(TrackSource.CAMERA, sent_request.permission.can_publish_sources)
+
+        self.assertEqual(pending_camera_requests(self.lesson), [])
+
+    def test_deny_camera_removes_request_without_granting_permission(self):
+        from unittest.mock import patch
+
+        from apps.live.services import pending_camera_requests
+
+        self.api(self.student).post('/api/v1/live/request-camera/', {'lesson_id': str(self.lesson.id)})
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            resp = self.api(self.teacher).post('/api/v1/live/deny-camera/', {
+                'lesson_id': str(self.lesson.id), 'student_id': str(self.student.id),
+            })
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.data['denied'])
+            mock_livekit_cls.assert_not_called()
+
+        self.assertEqual(pending_camera_requests(self.lesson), [])
 
     def test_deny_unknown_request_returns_false(self):
         resp = self.api(self.teacher).post('/api/v1/live/deny-mic/', {
@@ -1788,3 +1840,36 @@ class AutoFinishExpiredLessonsTests(APITestCase):
         services.auto_finish_expired_lessons()
         count2 = services.auto_finish_expired_lessons()
         self.assertEqual(count2, 0)
+
+    def test_late_started_lesson_not_finished_by_scheduled_time(self):
+        """2026-09-04 bug: rejalashtirilgan (starts_at) vaqti allaqachon
+        o'tgan bo'lsa ham, o'qituvchi KECH kirib darsni HOZIRGINA boshlagan
+        bo'lsa — hali davom etayotgan safar uzilmasligi kerak."""
+        from . import services
+        from .models import Lesson
+
+        now = timezone.now()
+        late = Lesson.objects.create(
+            course=self.course, title='Late start',
+            starts_at=now - timedelta(hours=2), duration_min=30,
+            status=Lesson.Status.LIVE, live_started_at=now - timedelta(minutes=5),
+        )
+        count = services.auto_finish_expired_lessons()
+        late.refresh_from_db()
+        self.assertEqual(late.status, Lesson.Status.LIVE)
+        self.assertNotIn(late.id, [self.expired.id])
+        self.assertEqual(count, 1)  # faqat self.expired (live_started_at yo'q, eski hisob)
+
+    def test_lesson_finished_after_live_started_plus_grace(self):
+        from . import services
+        from .models import Lesson
+
+        now = timezone.now()
+        stuck = Lesson.objects.create(
+            course=self.course, title='Stuck', starts_at=now - timedelta(hours=3),
+            duration_min=30, status=Lesson.Status.LIVE,
+            live_started_at=now - timedelta(minutes=61),  # 30 + 30 grace = 60 dan o'tgan
+        )
+        services.auto_finish_expired_lessons()
+        stuck.refresh_from_db()
+        self.assertEqual(stuck.status, Lesson.Status.FINISHED)

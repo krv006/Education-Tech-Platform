@@ -59,6 +59,17 @@ class BoardTests(TestCase):
         r = self.api(self.student).post(self.url('stroke/'), {'sheet': 0, 'stroke': STROKE}, format='json')
         self.assertEqual(r.status_code, 201)
 
+    def test_grant_broadcasts_to_websocket_immediately(self):
+        """2026-09-04 bug: ruxsat berilgach sahifa yangilanmaguncha ko'rinmasdi."""
+        from unittest.mock import patch
+
+        with patch('apps.board.realtime.broadcast_board_granted') as broadcast:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.api(self.teacher).post(
+                    self.url('grant/'), {'student_id': str(self.student.id)}, format='json',
+                )
+        broadcast.assert_called_once_with(self.lesson.id, str(self.student.id))
+
     def test_away_students_shown_only_to_teacher(self):
         from apps.live import services as live_services
 
