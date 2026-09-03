@@ -1474,29 +1474,29 @@ class JoinQueueTests(APITestCase):
         resp = self.api(self.students[0]).post('/api/v1/live/token/', {'lesson_id': str(other_lesson.id)})
         self.assertEqual(resp.data['join_delay_ms'], 1200)
 
-    def test_overflow_beyond_cap_is_spread_not_piled(self):
-        """2026-09-04 tuzatildi: juda katta portlashda (masalan 500 kishi)
-        chegaradan (MAX_DELAY_MS) oshgan HAMMASI avval AYNAN bir xil
-        kechikish olardi — bu o'sha nuqtaning o'zida yangi portlash yasardi.
-        Endi tasodifiy oyna ichida sochilib ketishi kerak."""
+    def test_delay_grows_unbounded_for_extreme_burst_no_pileup_at_cap(self):
+        """2026-09-04 tuzatildi: avval qat'iy chegara (20s) bor edi — chegaraga
+        yetgan HAMMASI o'sha nuqtaning o'zida zichlashib qolib, aynan oldini
+        olishga harakat qilingan portlashning o'zini qayta yaratardi (faqat
+        kechiktirilgan holda). Endi chegara YO'Q — xavfsiz tezlik (6/1.2s)
+        N qancha katta bo'lmasin, HECH QACHON buzilmaydi, kechikish shunchaki
+        chiziqli o'sib boradi (`AWS full-jitter` singari tasodifiy taxminlash
+        emas — bu yerda markazlashgan, aniq hisoblagich borligi uchun
+        qat'iy tezlik cheklovi ustunroq)."""
         from apps.live.services import (
-            _JOIN_QUEUE_MAX_DELAY_MS,
-            _JOIN_QUEUE_OVERFLOW_JITTER_MS,
+            _JOIN_QUEUE_BATCH_INTERVAL_MS,
+            _JOIN_QUEUE_BATCH_SIZE,
             _compute_join_delay_ms,
         )
 
-        # Chegaradan ancha oshadigan pozitsiyagacha hisoblagichni suramiz.
-        for _ in range(200):
-            _compute_join_delay_ms()
-
-        delays = {_compute_join_delay_ms() for _ in range(30)}
-        # Barchasi chegaradan katta yoki teng, va jitter oralig'idan oshmaydi.
-        for d in delays:
-            self.assertGreaterEqual(d, _JOIN_QUEUE_MAX_DELAY_MS)
-            self.assertLessEqual(d, _JOIN_QUEUE_MAX_DELAY_MS + _JOIN_QUEUE_OVERFLOW_JITTER_MS)
-        # AYNAN bir xil emas — haqiqatan sochilgan (tasodifan hammasi bir xil
-        # chiqish ehtimoli amalda nol, 30 ta namunada).
-        self.assertGreater(len(delays), 1)
+        delays = [_compute_join_delay_ms() for _ in range(600)]
+        # 500-pozitsiyaga yaqin kishi eski (20s) chegaradan SEZILARLI uzoqroq
+        # kutadi — bu ATAYLAB shunday (pastga qarang), pileup emas.
+        self.assertGreater(delays[499], 20_000)
+        # Hech ikkita KETMA-KET PARTIYA bir xil kechikishga ega emas — ya'ni
+        # hech qanday nuqtada "tekislanib" cheklanmayapti, chiziqli davom etadi.
+        expected_last = ((600 - 1) // _JOIN_QUEUE_BATCH_SIZE) * _JOIN_QUEUE_BATCH_INTERVAL_MS
+        self.assertEqual(delays[-1], expected_last)
 
 
 class MicPermissionTests(APITestCase):
