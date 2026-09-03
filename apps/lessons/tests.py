@@ -1474,6 +1474,30 @@ class JoinQueueTests(APITestCase):
         resp = self.api(self.students[0]).post('/api/v1/live/token/', {'lesson_id': str(other_lesson.id)})
         self.assertEqual(resp.data['join_delay_ms'], 1200)
 
+    def test_overflow_beyond_cap_is_spread_not_piled(self):
+        """2026-09-04 tuzatildi: juda katta portlashda (masalan 500 kishi)
+        chegaradan (MAX_DELAY_MS) oshgan HAMMASI avval AYNAN bir xil
+        kechikish olardi — bu o'sha nuqtaning o'zida yangi portlash yasardi.
+        Endi tasodifiy oyna ichida sochilib ketishi kerak."""
+        from apps.live.services import (
+            _JOIN_QUEUE_MAX_DELAY_MS,
+            _JOIN_QUEUE_OVERFLOW_JITTER_MS,
+            _compute_join_delay_ms,
+        )
+
+        # Chegaradan ancha oshadigan pozitsiyagacha hisoblagichni suramiz.
+        for _ in range(200):
+            _compute_join_delay_ms()
+
+        delays = {_compute_join_delay_ms() for _ in range(30)}
+        # Barchasi chegaradan katta yoki teng, va jitter oralig'idan oshmaydi.
+        for d in delays:
+            self.assertGreaterEqual(d, _JOIN_QUEUE_MAX_DELAY_MS)
+            self.assertLessEqual(d, _JOIN_QUEUE_MAX_DELAY_MS + _JOIN_QUEUE_OVERFLOW_JITTER_MS)
+        # AYNAN bir xil emas — haqiqatan sochilgan (tasodifan hammasi bir xil
+        # chiqish ehtimoli amalda nol, 30 ta namunada).
+        self.assertGreater(len(delays), 1)
+
 
 class MicPermissionTests(APITestCase):
     """Mikrofon so'rov/ruxsat: o'quvchi standart holatda mikrofonsiz kiradi,

@@ -37,9 +37,16 @@ _JOIN_QUEUE_BATCH_SIZE = 6
 _JOIN_QUEUE_BATCH_INTERVAL_MS = 1200
 # Global navbatda kutish safi ancha uzunroq bo'lishi mumkin (ko'p dars bir
 # vaqtda boshlansa) — shuning uchun chegara lesson-bo'yicha versiyadan
-# kengroq (aks holda chegaraga tirbandlik hosil bo'lib, o'sha nuqtada
-# yangi kichik portlash yasaladi).
+# kengroq.
 _JOIN_QUEUE_MAX_DELAY_MS = 20_000
+# 2026-09-04: chegaraga (MAX_DELAY_MS) YETGAN barcha pozitsiyalar avval
+# AYNAN bir xil kechikish olardi — juda katta portlashda (masalan 500 kishi
+# bir vaqtda) 100+ kishi 20-soniyada bittasiga tushib, o'sha nuqtaning o'zida
+# YANGI, kattaroq portlash yasardi (aynan oldini olishga harakat qilingan
+# muammoning o'zi, faqat kechiktirilgan holda). Endi chegaradan oshgan
+# HAMMASI shu tasodifiy oyna ichida sochilib ketadi — qat'iy partiyalash
+# o'rniga, faqat "tirbandlikni" yumshatish uchun.
+_JOIN_QUEUE_OVERFLOW_JITTER_MS = 8_000
 
 
 def _compute_join_delay_ms() -> int:
@@ -58,7 +65,9 @@ def _compute_join_delay_ms() -> int:
         cache.set(key, 1, timeout=_JOIN_QUEUE_WINDOW_SECONDS)
         position = 1
     delay_ms = ((position - 1) // _JOIN_QUEUE_BATCH_SIZE) * _JOIN_QUEUE_BATCH_INTERVAL_MS
-    return min(delay_ms, _JOIN_QUEUE_MAX_DELAY_MS)
+    if delay_ms >= _JOIN_QUEUE_MAX_DELAY_MS:
+        return _JOIN_QUEUE_MAX_DELAY_MS + random.randint(0, _JOIN_QUEUE_OVERFLOW_JITTER_MS)
+    return delay_ms
 
 
 def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
