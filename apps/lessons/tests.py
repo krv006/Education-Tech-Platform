@@ -283,6 +283,69 @@ class CourseLessonFlowTests(APITestCase):
         resp = self.client.delete(f'/api/v1/courses/{self.course_id}/')
         self.assertEqual(resp.status_code, 404)  # boshqa oquvchining kursi korinmaydi (queryset scoped)
 
+    def test_teacher_has_no_rating_before_any_lesson_rated(self):
+        self.auth(self.teacher_token)
+        resp = self.client.get('/api/v1/auth/me/')
+        self.assertIsNone(resp.json()['avg_rating'])
+        self.assertEqual(resp.json()['rating_count'], 0)
+
+    def test_teacher_sees_own_average_rating_across_lessons(self):
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+
+        starts_at = (timezone.now() + timedelta(days=2)).isoformat()
+        self.auth(self.teacher_token)
+        lesson2_id = self.client.post('/api/v1/lessons/', {
+            'course': self.course_id, 'title': 'Dars 2',
+            'starts_at': starts_at, 'duration_min': 45,
+        }).json()['id']
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+        self.client.post(f'/api/v1/lessons/{lesson2_id}/finish/')
+
+        self.auth(self.child_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5})
+        self.client.post(f'/api/v1/lessons/{lesson2_id}/rate/', {'stars': 3})
+
+        self.auth(self.teacher_token)
+        resp = self.client.get('/api/v1/auth/me/')
+        self.assertEqual(resp.json()['avg_rating'], 4.0)
+        self.assertEqual(resp.json()['rating_count'], 2)
+
+    def test_student_rating_field_is_null_not_teacher(self):
+        self.auth(self.child_token)
+        resp = self.client.get('/api/v1/auth/me/')
+        self.assertIsNone(resp.json()['avg_rating'])
+        self.assertIsNone(resp.json()['rating_count'])
+
+    def test_admin_teacher_list_shows_rating_stats(self):
+        from apps.accounts.models import User
+
+        User.objects.create_user(username='admin1', password=PASSWORD, role=User.Role.ADMIN)
+        admin_token = login(self.client, 'admin1')
+
+        self.auth(self.parent_token)
+        self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})
+        self.approve_all_requests()
+
+        self.auth(self.teacher_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/finish/')
+        self.auth(self.child_token)
+        self.client.post(f'/api/v1/lessons/{self.lesson_id}/rate/', {'stars': 5})
+
+        self.auth(admin_token)
+        resp = self.client.get('/api/v1/auth/teachers/')
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()['results'] if isinstance(resp.json(), dict) else resp.json()
+        teacher_row = next(r for r in results if r['username'] == 't1')
+        self.assertEqual(teacher_row['avg_rating'], 5.0)
+        self.assertEqual(teacher_row['rating_count'], 1)
+
+    def test_non_admin_cannot_list_teachers(self):
+        self.auth(self.teacher_token)
+        resp = self.client.get('/api/v1/auth/teachers/')
+        self.assertEqual(resp.status_code, 403)
+
 
 class FocusSummaryTests(APITestCase):
     """Chiqish-qaytish tahlili: juftlash, jami/eng uzun vaqt, taymlayn."""
@@ -487,6 +550,8 @@ class RecordingTests(APITestCase):
         """Yozuv (birlashtirish/finalize) haqiqatan tayyor bo'lganda —
         finish_lesson orqali saqlangan nom bilan guruh chatga e'lon
         qilinadi."""
+        from unittest.mock import patch
+
         from apps.chat.models import Message
 
         from . import services as lesson_services
@@ -497,10 +562,14 @@ class RecordingTests(APITestCase):
             recording_title='Kvadrat tenglamalar (video)',
         )
         self.recording.refresh_from_db()
-        _announce_recording_ready(self.recording)
+        with patch('apps.chat.realtime.broadcast_message') as broadcast:
+            with self.captureOnCommitCallbacks(execute=True):
+                _announce_recording_ready(self.recording)
         msg = Message.objects.filter(text__contains='/recordings/').latest('created_at')
         self.assertIn('Kvadrat tenglamalar (video)', msg.text)
         self.assertIn(str(self.lesson.id), msg.text)
+        # WebSocket'ga darhol tarqatilishi kerak (2026-09-03: shu bug tuzatildi).
+        broadcast.assert_called_once_with(msg)
 
     def test_info_gives_stream_url_to_member_only(self):
         r = self.api(self.student).get(f'/api/v1/lessons/{self.lesson.id}/recording/')

@@ -403,7 +403,9 @@ def publish_board_pdf(lesson: Lesson):
     if path is None:
         return
     from django.core.files import File
+    from django.db import transaction
 
+    from apps.chat import realtime
     from apps.chat import services as chat_services
     from apps.chat.models import Message
 
@@ -417,6 +419,8 @@ def publish_board_pdf(lesson: Lesson):
         msg.file.save(f'doska_{lesson.id}.pdf', File(f), save=False)
     msg.save()
     room.save(update_fields=['updated_at'])
+    # send_message bilan bir xil: WebSocket'ga darhol tarqatamiz.
+    transaction.on_commit(lambda: realtime.broadcast_message(msg))
 
 
 def solve_formula(*, user: User, lesson_id, expr: str) -> dict:

@@ -10,9 +10,15 @@ PASSWORD = 'StrongPass123!'
 
 
 def register(client, username, role, **extra):
-    return client.post('/api/v1/auth/register/', {
+    """Testlar uchun umumiy yordamchi — o'qituvchi darhol tasdiqlanadi,
+    aks holda deyarli barcha testlar (register -> course.create va h.k.) buziladi.
+    Tasdiqlash oqimining o'zi alohida testda tekshiriladi (TeacherActivationTests)."""
+    resp = client.post('/api/v1/auth/register/', {
         'username': username, 'password': PASSWORD, 'role': role, **extra,
     })
+    if resp.status_code == 201 and role == 'teacher':
+        User.objects.filter(username=username).update(is_approved=True)
+    return resp
 
 
 def login(client, username):
@@ -29,8 +35,18 @@ class AuthTests(APITestCase):
         me = self.client.get('/api/v1/auth/me/')
         self.assertEqual(me.json()['role'], 'teacher')
 
-    def test_student_cannot_register_publicly(self):
+    def test_student_can_register_publicly(self):
         resp = register(self.client, 'student1', 'student')
+        self.assertEqual(resp.status_code, 201)
+        token = login(self.client, 'student1')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        me = self.client.get('/api/v1/auth/me/')
+        self.assertEqual(me.json()['role'], 'student')
+        # ota-ona keyin bog'lanishi uchun invite_code hali ham beriladi
+        self.assertTrue(me.json()['invite_code'])
+
+    def test_unknown_role_cannot_register_publicly(self):
+        resp = register(self.client, 'weird1', 'admin')
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertFalse(body['success'])
@@ -58,6 +74,83 @@ class AuthTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['avatar'])
         self.assertIn('/media/avatars/', resp.json()['avatar'])
+
+
+class CertificateTests(APITestCase):
+    def upload(self, filename='cert.png'):
+        buf = io.BytesIO()
+        Image.new('RGB', (10, 10), 'blue').save(buf, format='PNG')
+        return SimpleUploadedFile(filename, buf.getvalue(), content_type='image/png')
+
+    def test_teacher_uploads_certificate_and_sees_it_on_profile(self):
+        register(self.client, 'teacher3', 'teacher')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "teacher3")}')
+
+        resp = self.client.post('/api/v1/auth/me/certificates/', {
+            'file': self.upload(), 'title': "IELTS 8.0",
+        }, format='multipart')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['title'], 'IELTS 8.0')
+
+        me = self.client.get('/api/v1/auth/me/')
+        self.assertEqual(len(me.json()['certificates']), 1)
+        self.assertEqual(me.json()['certificates'][0]['title'], 'IELTS 8.0')
+
+    def test_non_teacher_cannot_upload_certificate(self):
+        register(self.client, 'parent5', 'parent')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "parent5")}')
+        resp = self.client.post('/api/v1/auth/me/certificates/', {'file': self.upload()}, format='multipart')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_teacher_deletes_own_certificate(self):
+        register(self.client, 'teacher4', 'teacher')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "teacher4")}')
+        cert_id = self.client.post(
+            '/api/v1/auth/me/certificates/', {'file': self.upload()}, format='multipart',
+        ).json()['id']
+
+        resp = self.client.delete(f'/api/v1/auth/me/certificates/{cert_id}/')
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(len(self.client.get('/api/v1/auth/me/').json()['certificates']), 0)
+
+    def test_teacher_cannot_delete_foreign_certificate(self):
+        register(self.client, 'teacher5', 'teacher')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "teacher5")}')
+        cert_id = self.client.post(
+            '/api/v1/auth/me/certificates/', {'file': self.upload()}, format='multipart',
+        ).json()['id']
+
+        register(self.client, 'teacher6', 'teacher')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "teacher6")}')
+        resp = self.client.delete(f'/api/v1/auth/me/certificates/{cert_id}/')
+        self.assertEqual(resp.status_code, 404)
+
+
+class TeacherActivationTests(APITestCase):
+    """O'qituvchi ro'yxatdan o'tgach kira oladi, lekin admin tasdiqlamaguncha
+    kurs ochish kabi amallarga ruxsati yo'q (real oqim, `register()`
+    yordamchisidagi avto-tasdiqni chetlab o'tib)."""
+
+    def test_teacher_actions_blocked_until_admin_approves(self):
+        resp = self.client.post('/api/v1/auth/register/', {
+            'username': 'newteacher', 'password': PASSWORD, 'role': 'teacher',
+        })
+        self.assertFalse(resp.json()['is_approved'])
+
+        token = login(self.client, 'newteacher')  # kira oladi
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        self.assertEqual(self.client.post('/api/v1/courses/', {'title': 'Hack'}).status_code, 403)
+
+        User.objects.create_user(username='admin1', password=PASSWORD, role=User.Role.ADMIN)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "admin1")}')
+        teacher_id = User.objects.get(username='newteacher').id
+        resp = self.client.post(f'/api/v1/auth/teachers/{teacher_id}/approve/')
+        self.assertTrue(resp.json()['is_approved'])
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        self.assertEqual(
+            self.client.post('/api/v1/courses/', {'title': 'Algebra'}).status_code, 201,
+        )
 
 
 class LinkFlowTests(APITestCase):

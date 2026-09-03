@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Consent, ParentChildLink, User
+from .models import Consent, ParentChildLink, TeacherCertificate, User
 
 
 @admin.register(User)
@@ -23,3 +23,9 @@ class ParentChildLinkAdmin(admin.ModelAdmin):
 class ConsentAdmin(admin.ModelAdmin):
     list_display = ['student', 'kind', 'granted', 'granted_by', 'updated_at']
     list_filter = ['kind', 'granted']
+
+
+@admin.register(TeacherCertificate)
+class TeacherCertificateAdmin(admin.ModelAdmin):
+    list_display = ['teacher', 'title', 'created_at']
+    search_fields = ['teacher__username', 'title']

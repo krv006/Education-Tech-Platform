@@ -8,6 +8,7 @@ from django.db.models import (
     BooleanField,
     CharField,
     DateTimeField,
+    FileField,
     ForeignKey,
     ImageField,
     TextChoices,
@@ -33,6 +34,9 @@ class User(AbstractUser):
 
     id = UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     role = CharField(max_length=16, choices=Role.choices, default=Role.STUDENT, db_index=True)
+    # O'qituvchi ro'yxatdan o'tganda False — admin tasdiqlaguncha kursi/darsi ochilmaydi
+    # (RequirePerm shu bayroqni tekshiradi, apps.core.permissions.user_has_perm).
+    is_approved = BooleanField(default=True)
     phone = CharField(max_length=20, unique=True, null=True, blank=True)
     # Student's invite code — parent enters it to request a link (consent flow).
     invite_code = CharField(max_length=12, unique=True, null=True, blank=True)
@@ -101,3 +105,17 @@ class Consent(TimeStampedUUIDModel):
 
     def __str__(self):
         return f'{self.student.username} · {self.kind} = {self.granted}'
+
+
+class TeacherCertificate(TimeStampedUUIDModel):
+    """O'qituvchi profiliga yuklaydigan malaka sertifikati (rasm yoki PDF)."""
+
+    teacher = ForeignKey('accounts.User', CASCADE, related_name='certificates')
+    file = FileField(upload_to='certificates/%Y/%m/')
+    title = CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.teacher.username} · {self.title or self.file.name}'

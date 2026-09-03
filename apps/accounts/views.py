@@ -13,6 +13,7 @@ from apps.core.permissions import RequirePerm
 
 from . import selectors, services
 from .serializers import (
+    CertificateSerializer,
     ChildCreateSerializer,
     ConsentSerializer,
     LinkRequestSerializer,
@@ -156,6 +157,66 @@ class UserSearchView(APIView):
             Q(username__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q)
         ).exclude(pk=request.user.pk).order_by('username')[:10]
         return Response(UserSerializer(users, many=True).data)
+
+
+class TeacherStatsListView(generics.ListAPIView):
+    """Admin: barcha o'qituvchilar ro'yxati, har birining umumiy reytingi bilan."""
+
+    permission_classes = [RequirePerm('user.manage')]
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        return selectors.teacher_list()
+
+
+class PendingTeachersListView(generics.ListAPIView):
+    """Admin: tasdiq kutayotgan (hali faollashtirilmagan) o'qituvchilar."""
+
+    permission_classes = [RequirePerm('user.manage')]
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        return selectors.pending_teachers()
+
+
+class ApproveTeacherView(APIView):
+    """Admin: o'qituvchini tasdiqlash — shundan keyin kira oladi."""
+
+    permission_classes = [RequirePerm('user.manage')]
+
+    def post(self, request, pk):
+        teacher = services.approve_teacher(admin=request.user, teacher_id=pk, request=request)
+        return Response(UserSerializer(teacher).data)
+
+
+class CertificateListCreateView(generics.ListCreateAPIView):
+    """O'qituvchi profiliga sertifikat yuklaydi — faqat o'ziniki."""
+
+    permission_classes = [RequirePerm('certificate.manage')]
+    serializer_class = CertificateSerializer
+
+    def get_queryset(self):
+        return self.request.user.certificates.all()
+
+    def create(self, request, *args, **kwargs):
+        serializer = CertificateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        certificate = services.upload_certificate(
+            teacher=request.user, file=serializer.validated_data['file'],
+            title=serializer.validated_data.get('title', ''),
+        )
+        return Response(
+            CertificateSerializer(certificate, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CertificateDeleteView(APIView):
+    permission_classes = [RequirePerm('certificate.manage')]
+
+    def delete(self, request, pk):
+        services.delete_certificate(teacher=request.user, certificate_id=pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ConsentListCreateView(generics.ListCreateAPIView):

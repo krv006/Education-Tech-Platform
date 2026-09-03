@@ -27,6 +27,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'audit.view',
         'user.manage',
         'notification.send',
+        'quiz.view',
     },
     TEACHER: {
         'course.create', 'course.edit', 'course.view', 'course.enroll',
@@ -36,6 +37,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'chat.use',
         'homework.assign', 'homework.view',
         'child.create',
+        'quiz.create', 'quiz.view',
+        'certificate.manage',
     },
     STUDENT: {
         'course.view', 'course.enroll',
@@ -45,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'attendance.view',
         'chat.use',
         'homework.submit', 'homework.view',
+        'quiz.view', 'quiz.attempt',
     },
     PARENT: {
         'child.create',
@@ -54,6 +58,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'lesson.view',
         'attendance.view',
         'homework.view',
+        'quiz.view',
     },
 }
 
@@ -68,7 +73,12 @@ def user_has_perm(user, perm: str) -> bool:
         return False
     if user.is_superuser:
         return True
-    return role_has_perm(getattr(user, 'role', ''), perm)
+    role = getattr(user, 'role', '')
+    # Tasdiqlanmagan o'qituvchi kira oladi, lekin admin tasdiqlamaguncha
+    # hech qanday amalga ruxsati yo'q (kurs/dars ochish va h.k.).
+    if role == TEACHER and not getattr(user, 'is_approved', True):
+        return False
+    return role_has_perm(role, perm)
 
 
 def RequirePerm(*perms: str):

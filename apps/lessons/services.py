@@ -646,11 +646,14 @@ def finalize_recording_video(*, teacher: User, lesson: Lesson) -> None:
 
 def publish_recording_message(lesson: Lesson, title: str) -> None:
     """Dars tugagach guruh chatga yozuv havolasini tashlaydi (board PDF uslubi)."""
+    from django.db import transaction
+
+    from apps.chat import realtime
     from apps.chat import services as chat_services
     from apps.chat.models import Message
 
     room = chat_services.ensure_course_room(lesson.course)
-    Message.objects.create(
+    message = Message.objects.create(
         room=room,
         sender=lesson.course.teacher,
         text=(
@@ -658,3 +661,7 @@ def publish_recording_message(lesson: Lesson, title: str) -> None:
             f"Ko'rish (faqat platformada): /recordings/{lesson.id}"
         ),
     )
+    room.save(update_fields=['updated_at'])
+    # send_message bilan bir xil: WebSocket'ga darhol tarqatamiz, aks holda
+    # chat qayta ochilmaguncha (yoki sahifa yangilanmaguncha) ko'rinmay turadi.
+    transaction.on_commit(lambda: realtime.broadcast_message(message))

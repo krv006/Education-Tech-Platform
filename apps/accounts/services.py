@@ -9,18 +9,35 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 
 from apps.core import audit
 
-from .models import Consent, ParentChildLink, User
+from .models import Consent, ParentChildLink, TeacherCertificate, User
 
 
 @transaction.atomic
 def register_user(*, username: str, password: str, role: str, request=None, **extra) -> User:
-    if role not in (User.Role.TEACHER, User.Role.PARENT):
-        raise ValidationError({'role': "Faqat o'qituvchi yoki ota-ona ro'yxatdan o'ta oladi."})
+    if role not in (User.Role.TEACHER, User.Role.PARENT, User.Role.STUDENT):
+        raise ValidationError({'role': "Faqat o'qituvchi, ota-ona yoki o'quvchi ro'yxatdan o'ta oladi."})
     user = User(username=username, role=role, **extra)
+    if role == User.Role.TEACHER:
+        # Kira oladi, lekin admin tasdiqlamaguncha kurs/dars ochish kabi
+        # amallarga ruxsati yo'q (RequirePerm — apps.core.permissions).
+        user.is_approved = False
     user.set_password(password)
     user.save()
     audit.record(action='auth.register', actor=user, target=user, meta={'role': role}, request=request)
     return user
+
+
+@transaction.atomic
+def approve_teacher(*, admin: User, teacher_id, request=None) -> User:
+    """Admin tomonidan tasdiqlash — shundan keyin o'qituvchiga hamma narsa ochiladi."""
+    try:
+        teacher = User.objects.get(pk=teacher_id, role=User.Role.TEACHER)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound("O'qituvchi topilmadi.")
+    teacher.is_approved = True
+    teacher.save(update_fields=['is_approved'])
+    audit.record(action='teacher.approve', actor=admin, target=teacher, request=request)
+    return teacher
 
 
 @transaction.atomic
@@ -160,6 +177,19 @@ def login_history(*, viewer: User, student_id=None, limit: int = 50) -> list:
         'new_ip': (r.meta or {}).get('new_ip', False),
         'new_device': (r.meta or {}).get('new_device', False),
     } for r in rows]
+
+
+def upload_certificate(*, teacher: User, file, title: str = '') -> TeacherCertificate:
+    return TeacherCertificate.objects.create(teacher=teacher, file=file, title=title)
+
+
+def delete_certificate(*, teacher: User, certificate_id) -> None:
+    try:
+        certificate = TeacherCertificate.objects.get(pk=certificate_id, teacher=teacher)
+    except (TeacherCertificate.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Sertifikat topilmadi.')
+    certificate.file.delete(save=False)
+    certificate.delete()
 
 
 def logout(*, user: User, refresh_token: str | None = None, request=None) -> None:

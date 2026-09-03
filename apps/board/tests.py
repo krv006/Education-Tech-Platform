@@ -111,11 +111,18 @@ class BoardTests(TestCase):
         self.assertEqual(r.data['removed'], 1)
 
     def test_finish_publishes_pdf_message(self):
+        from unittest.mock import patch
+
         services.add_stroke(user=self.teacher, lesson_id=self.lesson.id, sheet_index=0, stroke=STROKE)
-        self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/finish/')
+        with patch('apps.chat.realtime.broadcast_message') as broadcast:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/finish/')
         msg = Message.objects.filter(room=self.course.chat_room).last()
         self.assertIsNotNone(msg)
         self.assertTrue(msg.file)
+        # WebSocket'ga darhol tarqatilishi kerak — aks holda chat qayta
+        # ochilmaguncha ko'rinmaydi (2026-09-03: shu bug tuzatildi).
+        broadcast.assert_called_once_with(msg)
         # PDF autentifikatsiya bilan yuklab olinadi
         r = self.api(self.student).get(self.url('pdf/'))
         self.assertEqual(r.status_code, 200)

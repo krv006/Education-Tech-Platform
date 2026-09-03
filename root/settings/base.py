@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'apps.board',
     'apps.homework',
     'apps.notifications',
+    'apps.quizzes',
 ]
 
 MIDDLEWARE = [
