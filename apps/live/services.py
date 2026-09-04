@@ -119,6 +119,17 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         except Exception:  # noqa: BLE001
             import logging
             logging.getLogger('apps').exception('lesson_live broadcast failed')
+    elif is_teacher and lesson.status == Lesson.Status.LIVE:
+        # 2026-09-04 tuzatildi: `live_started_at` avval FAQAT birinchi marta
+        # LIVE'ga o'tganda yozilardi. O'qituvchi darsni tark etib (masalan
+        # sahifani yopib), SOATLAR o'tib qaytadan kirsa — eski vaqt hamon
+        # o'sha-o'sha qolganidan, auto_finish_expired_lessons darhol (yoki
+        # keyingi cron aylanishida, 1-2 daqiqa ichida) uni "muddati o'tgan"
+        # deb topib yopib qo'yardi — aynan qayta kirgan zahoti. Endi
+        # o'qituvchi HAR safar kirganda bu vaqt yangilanadi — soat faqat
+        # o'qituvchi CHINDAN uzoq vaqt (75+ daqiqa) qaytmasa ishga tushadi.
+        lesson.live_started_at = timezone.now()
+        lesson.save(update_fields=['live_started_at'])
     if user.role == User.Role.STUDENT:
         lesson_services.mark_joined(lesson=lesson, student=user)
         _ensure_attention_schedule(lesson=lesson, student=user)

@@ -1897,3 +1897,31 @@ class AutoFinishExpiredLessonsTests(APITestCase):
         services.auto_finish_expired_lessons()
         stuck.refresh_from_db()
         self.assertEqual(stuck.status, Lesson.Status.FINISHED)
+
+    def test_teacher_rejoining_stale_live_lesson_refreshes_clock(self):
+        """2026-09-04 tuzatildi: `live_started_at` avval FAQAT birinchi marta
+        LIVE'ga o'tganda yozilardi. O'qituvchi darsni tashlab ketib (masalan
+        sahifani yopib), SOATLAR o'tib — allaqachon "muddati o'tgan" holatga
+        yetgan bir paytda — qaytadan kirsa, eski soat hamon o'sha-o'sha
+        qolgani uchun auto-finish uni deyarli DARHOL (keyingi cron
+        aylanishida) yopib qo'yardi. Endi qayta kirish soatni yangilaydi."""
+        from rest_framework.test import APIClient
+
+        from . import services
+        from .models import Lesson
+
+        stale = Lesson.objects.create(
+            course=self.course, title='Stale', starts_at=timezone.now() - timedelta(hours=3),
+            duration_min=45, status=Lesson.Status.LIVE,
+            live_started_at=timezone.now() - timedelta(hours=2),  # 45+30=75 daqiqadan ancha o'tgan
+        )
+
+        client = APIClient()
+        client.force_authenticate(self.teacher)
+        resp = client.post('/api/v1/live/token/', {'lesson_id': str(stale.id)})
+        self.assertEqual(resp.status_code, 200)
+
+        # Qayta kirgan zahoti fon vazifasi ishga tushsa ham — endi yopilmasligi kerak.
+        services.auto_finish_expired_lessons()
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, Lesson.Status.LIVE)
