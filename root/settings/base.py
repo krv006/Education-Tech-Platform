@@ -117,7 +117,6 @@ REST_FRAMEWORK = {
         'anon': '60/min',
         'user': '240/min',
         'auth': '30/min',   # login / register / OTP — bruteforce himoyasi
-        'ai': '20/hour',    # Gemini chaqiruvlari — haqiqiy pul sarflaydi, suiiste'moldan himoya
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

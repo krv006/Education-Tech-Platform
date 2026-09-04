@@ -54,25 +54,13 @@ def _compute_join_delay_ms() -> int:
     `_JOIN_QUEUE_BATCH_INTERVAL_MS` keyin ulanadi — CHEKLANMAGAN (qancha
     katta N bo'lmasin, bir xil xavfsiz tezlik saqlanadi). Kalit o'zi
     `_JOIN_QUEUE_WINDOW_SECONDS` jim turgach eskiradi — portlashsiz,
-    kam-kam kelayotgan so'rovlarga deyarli tegilmaydi.
-
-    2026-09-04: Redis HAQIQIY uzilishida (ulanish xatosi va h.k. — `ValueError`
-    faqat "kalit hali yo'q" holatini bildiradi, Redis'ning o'zi ishlamay
-    qolishini emas) navbat "ochiq" ishlaydi (kechikish 0) — aks holda Redis
-    bir lahzalik uzilsa, HAMMA o'quvchi HECH QAYSI darsga kira olmay qolardi
-    (bitta xizmatning uzilishi butun platformaning jonli darsini to'xtatib
-    qo'yishi mumkin emas)."""
+    kam-kam kelayotgan so'rovlarga deyarli tegilmaydi."""
     key = 'live:join_queue:global'
     try:
-        try:
-            position = cache.incr(key)
-        except ValueError:
-            cache.set(key, 1, timeout=_JOIN_QUEUE_WINDOW_SECONDS)
-            position = 1
-    except Exception:  # noqa: BLE001 — Redis uzilishi: navbatsiz o'tkazamiz, kirishni bloklamaymiz
-        import logging
-        logging.getLogger('apps').exception('_compute_join_delay_ms: cache ishlamayapti, navbatsiz o\'tkazildi')
-        return 0
+        position = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=_JOIN_QUEUE_WINDOW_SECONDS)
+        position = 1
     return ((position - 1) // _JOIN_QUEUE_BATCH_SIZE) * _JOIN_QUEUE_BATCH_INTERVAL_MS
 
 
@@ -100,25 +88,8 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
 
     # O'quvchi default mikrofon, kamera va ekran share qila olmaydi —
     # o'qituvchi ruxsat berganda grant_mic()/grant_camera()/grant_screen_share()
-    # orqali ochiladi (2026-09-04: kamera ham cheklandi, avval erkin edi).
-    # Ruxsat BAZADAN o'qiladi (LiveKitPermission) — shuning uchun o'quvchi
-    # tarmoq uzilib QAYTA ULANSA HAM, oldin berilgan ruxsat saqlanib qoladi
-    # (avval faqat joriy LiveKit sessiyasiga jonli yozilardi — reconnect'da
-    # yo'qolib qolardi, 2026-09-04 tuzatildi).
-    if is_teacher:
-        publish_sources = None
-    else:
-        from apps.lessons.models import LiveKitPermission
-
-        granted = LiveKitPermission.objects.filter(lesson=lesson, student=user).first()
-        publish_sources = []
-        if granted:
-            if granted.mic:
-                publish_sources.append('microphone')
-            if granted.camera:
-                publish_sources.append('camera')
-            if granted.screen_share:
-                publish_sources += ['screen_share', 'screen_share_audio']
+    # orqali jonli ochiladi (2026-09-04: kamera ham cheklandi, avval erkin edi).
+    publish_sources = None if is_teacher else []
     token = (
         AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
         .with_identity(f'user-{user.id}')
@@ -372,26 +343,13 @@ def pending_camera_requests(lesson: Lesson) -> list[dict]:
 
 
 def grant_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
-    """O'qituvchi o'quvchiga kamera ruxsatini beradi.
-
-    Avvalo BAZAGA yoziladi (LiveKitPermission) — shu haqiqiy manba, keyingi
-    `issue_room_token()` chaqiruvlarida (jumladan qayta ulanishda) ham
-    hurmat qilinadi. LiveKit'ga jonli push — faqat DARHOL ta'sir uchun
-    qo'shimcha tezlik; o'quvchi hozircha ulanmagan bo'lsa (masalan navbatda
-    kutayotgan bo'lsa — 2026-09-04: xuddi shu holat sabab 500 xato chiqardi,
-    endi bazaga yozilgani uchun muammo emas), jimgina o'tkazib yuboriladi —
-    o'quvchi ulangach, token'ning o'zi ruxsatni to'g'ri beradi."""
+    """O'qituvchi o'quvchiga kamera ruxsatini jonli ochadi — `grant_mic` bilan
+    bir xil naqsh, mavjud ruxsatlarni (mikrofon/ekran) saqlab qolib qo'shadi."""
     lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
         raise NotFound("O'quvchi topilmadi.")
-
-    from apps.lessons.models import LiveKitPermission
-
-    LiveKitPermission.objects.update_or_create(
-        lesson=lesson, student=student, defaults={'camera': True},
-    )
 
     identity = f'user-{student.id}'
 
@@ -421,11 +379,7 @@ def grant_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
         finally:
             await client.aclose()
 
-    try:
-        asyncio.run(_update())
-    except Exception:  # noqa: BLE001 — o'quvchi hali ulanmagan bo'lishi mumkin (navbatda) — baribir bazaga yozildi
-        import logging
-        logging.getLogger('apps').info('grant_camera: jonli yangilab bo\'lmadi (ulanmagan bo\'lishi mumkin)')
+    asyncio.run(_update())
 
     from apps.lessons.models import CameraRequest
     CameraRequest.objects.filter(lesson=lesson, student=student).delete()
@@ -486,13 +440,7 @@ def _livekit_http_url() -> str:
 
 
 def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None) -> bool:
-    """O'qituvchi o'quvchiga ekran ulashish ruxsatini beradi.
-
-    BAZAGA yoziladi (LiveKitPermission.screen_share) — `grant_mic`/
-    `grant_camera` bilan bir xil naqsh (2026-09-04). Avval mikrofon/kamerani
-    ham SO'RALMAGAN holda majburan yoqib yuborardi (butun ro'yxatni
-    almashtirardi) — endi faqat mavjud ruxsatlar ustiga QO'SHADI, boshqa
-    ruxsatlarni o'zgartirmaydi."""
+    """O'qituvchi o'quvchiga ekran ulashish ruxsatini jonli ochadi (LiveKit server API)."""
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
@@ -500,32 +448,13 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
     if lesson.course.teacher_id != teacher.id:
         raise PermissionDenied("Faqat kurs o'qituvchisi ruxsat beradi.")
 
-    try:
-        student = User.objects.get(pk=identity.removeprefix('user-'), role=User.Role.STUDENT)
-    except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
-
-    from apps.lessons.models import LiveKitPermission
-
-    LiveKitPermission.objects.update_or_create(
-        lesson=lesson, student=student, defaults={'screen_share': True},
-    )
-
     async def _update():
-        from livekit.protocol.room import RoomParticipantIdentity
-
         client = LiveKitAPI(
             url=_livekit_http_url(),
             api_key=settings.LIVEKIT_API_KEY,
             api_secret=settings.LIVEKIT_API_SECRET,
         )
         try:
-            info = await client.room.get_participant(RoomParticipantIdentity(
-                room=lesson.room_name, identity=identity,
-            ))
-            sources = set(info.permission.can_publish_sources) | {
-                TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO,
-            }
             await client.room.update_participant(UpdateParticipantRequest(
                 room=lesson.room_name,
                 identity=identity,
@@ -533,18 +462,18 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
                     can_subscribe=True,
                     can_publish=True,
                     can_publish_data=True,
-                    can_publish_sources=list(sources),
+                    can_publish_sources=[
+                        TrackSource.CAMERA,
+                        TrackSource.MICROPHONE,
+                        TrackSource.SCREEN_SHARE,
+                        TrackSource.SCREEN_SHARE_AUDIO,
+                    ],
                 ),
             ))
         finally:
             await client.aclose()
 
-    try:
-        asyncio.run(_update())
-    except Exception:  # noqa: BLE001 — o'quvchi hali ulanmagan bo'lishi mumkin — baribir bazaga yozildi
-        import logging
-        logging.getLogger('apps').info('grant_screen_share: jonli yangilab bo\'lmadi (ulanmagan bo\'lishi mumkin)')
-
+    asyncio.run(_update())
     audit.record(
         action='room.allow_share', actor=teacher, target=lesson,
         meta={'identity': identity}, request=request,
@@ -553,23 +482,14 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
 
 
 def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
-    """O'qituvchi o'quvchiga mikrofon ruxsatini beradi.
-
-    Avvalo BAZAGA yoziladi (LiveKitPermission, `grant_camera`dagi bilan bir
-    xil naqsh) — qayta ulanishda ham saqlanadi. LiveKit'ga jonli push faqat
-    darhol ta'sir uchun, xato bo'lsa jimgina o'tkazib yuboriladi (o'quvchi
-    navbatda kutayotgan bo'lishi mumkin — 2026-09-04 tuzatildi)."""
+    """O'qituvchi o'quvchiga mikrofon ruxsatini jonli ochadi (LiveKit server
+    API) — (agar oldin berilgan bo'lsa) kamera/ekran ulashish ruxsatini
+    saqlab qolib, ustiga mikrofonni qo'shadi."""
     lesson = _get_owned_lesson(teacher=teacher, lesson_id=lesson_id)
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
         raise NotFound("O'quvchi topilmadi.")
-
-    from apps.lessons.models import LiveKitPermission
-
-    LiveKitPermission.objects.update_or_create(
-        lesson=lesson, student=student, defaults={'mic': True},
-    )
 
     identity = f'user-{student.id}'
 
@@ -603,11 +523,7 @@ def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
         finally:
             await client.aclose()
 
-    try:
-        asyncio.run(_update())
-    except Exception:  # noqa: BLE001 — o'quvchi hali ulanmagan bo'lishi mumkin (navbatda) — baribir bazaga yozildi
-        import logging
-        logging.getLogger('apps').info('grant_mic: jonli yangilab bo\'lmadi (ulanmagan bo\'lishi mumkin)')
+    asyncio.run(_update())
 
     from apps.lessons.models import MicRequest
     MicRequest.objects.filter(lesson=lesson, student=student).delete()

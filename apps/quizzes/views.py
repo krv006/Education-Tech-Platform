@@ -14,7 +14,6 @@ from apps.core.permissions import RequirePerm
 from . import selectors, services
 from .models import Quiz
 from .serializers import (
-    AIQuizDraftRequestSerializer,
     AttemptListSerializer,
     AttemptResultSerializer,
     AttemptSubmitSerializer,
@@ -95,23 +94,3 @@ class QuizAttemptListCreateView(APIView):
             student=request.user, quiz=quiz, answers=serializer.validated_data['answers'],
         )
         return Response(AttemptResultSerializer(attempt).data, status=status.HTTP_201_CREATED)
-
-
-class AIQuizDraftView(APIView):
-    """O'qituvchi: o'tilgan darslar asosida AI test qoralamasi (bazaga
-    yozilmaydi — tahrirlab, POST /quizzes/ orqali o'zi yaratadi)."""
-
-    permission_classes = [RequirePerm('quiz.create')]
-    throttle_scope = 'ai'
-
-    def post(self, request):
-        from apps.lessons import services as lesson_services
-
-        serializer = AIQuizDraftRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        draft = lesson_services.generate_ai_quiz_draft(
-            teacher=request.user, course_id=data['course'],
-            lesson_ids=data.get('lesson_ids'), question_count=data['question_count'],
-        )
-        return Response(draft)
