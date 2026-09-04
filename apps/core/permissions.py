@@ -49,6 +49,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         'chat.use',
         'homework.submit', 'homework.view',
         'quiz.view', 'quiz.attempt',
+        'course.ask',
     },
     PARENT: {
         'child.create',

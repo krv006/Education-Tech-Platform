@@ -10,6 +10,7 @@ from apps.accounts import selectors as account_selectors
 from apps.accounts.models import User
 from apps.core import audit
 
+from . import ai
 from .models import Attendance, Course, Enrollment, Lesson
 
 
@@ -681,3 +682,62 @@ def publish_recording_message(lesson: Lesson, title: str) -> None:
     # send_message bilan bir xil: WebSocket'ga darhol tarqatamiz, aks holda
     # chat qayta ochilmaguncha (yoki sahifa yangilanmaguncha) ko'rinmay turadi.
     transaction.on_commit(lambda: realtime.broadcast_message(message))
+
+
+# ─── AI o'quv yordamchisi (test qoralamasi + savol-javob) ──────────────────
+
+def _covered_lesson_titles(course: Course, lesson_ids: list | None = None) -> list[str]:
+    """O'tilgan (tugagan) darslar nomlari — AI konteksti shundan quriladi."""
+    qs = course.lessons.filter(status=Lesson.Status.FINISHED)
+    if lesson_ids:
+        qs = qs.filter(id__in=lesson_ids)
+    return list(qs.order_by('starts_at').values_list('title', flat=True))
+
+
+def generate_ai_quiz_draft(
+    *, teacher: User, course_id, lesson_ids: list | None = None, question_count: int = 5,
+) -> dict:
+    """O'qituvchi uchun AI test qoralamasi — hech narsa bazaga yozilmaydi."""
+    try:
+        course = Course.objects.get(pk=course_id, teacher=teacher)
+    except (Course.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Kurs topilmadi.')
+
+    titles = _covered_lesson_titles(course, lesson_ids)
+    if not titles:
+        raise ValidationError('Bu kursda hali o\'tilgan (tugagan) dars yo\'q — AI test tuza olmaydi.')
+
+    draft = ai.generate_quiz_draft(
+        subject_text=course.subject, lesson_titles=titles, question_count=question_count,
+    )
+    audit.record(
+        action='quiz.ai_draft', actor=teacher, target=course,
+        meta={'lesson_titles': titles, 'question_count': question_count},
+    )
+    return draft
+
+
+def ask_course_question(*, student: User, course_id, question: str) -> str:
+    """O'quvchi kurs mavzusi bo'yicha tushunmagan narsasini so'raydi."""
+    question = (question or '').strip()
+    if not question:
+        raise ValidationError({'question': "Savol bo'sh bo'lishi mumkin emas."})
+    if len(question) > 1000:
+        raise ValidationError({'question': 'Savol juda uzun (maks. 1000 belgi).'})
+
+    try:
+        course = Course.objects.get(pk=course_id)
+    except (Course.DoesNotExist, ValueError, TypeError):
+        raise NotFound('Kurs topilmadi.')
+    is_enrolled = Enrollment.objects.filter(
+        course=course, student=student, status=Enrollment.Status.APPROVED,
+    ).exists()
+    if not is_enrolled:
+        raise PermissionDenied('Siz bu kursga yozilmagansiz.')
+
+    titles = _covered_lesson_titles(course)
+    answer = ai.answer_course_question(
+        subject_text=course.subject, lesson_titles=titles, question=question,
+    )
+    audit.record(action='course.ask', actor=student, target=course, meta={'question': question})
+    return answer

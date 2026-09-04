@@ -2,6 +2,15 @@ from rest_framework import serializers
 
 from .models import AnswerResponse, Option, Question, Quiz, QuizAttempt
 
+# ─── AI qoralamasi so'rovi ──────────────────────────────────────────────────
+
+
+class AIQuizDraftRequestSerializer(serializers.Serializer):
+    course = serializers.UUIDField()
+    lesson_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+    question_count = serializers.IntegerField(required=False, min_value=1, max_value=15, default=5)
+
+
 # ─── Yaratish (o'qituvchi yozadi) ──────────────────────────────────────────
 
 

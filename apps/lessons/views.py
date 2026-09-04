@@ -7,6 +7,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.models import User
 from apps.accounts.serializers import UserSerializer
@@ -15,6 +16,7 @@ from apps.core.permissions import RequirePerm
 from . import selectors, services
 from .models import Course, Enrollment
 from .serializers import (
+    AskCourseQuestionSerializer,
     AttendanceSerializer,
     CourseSerializer,
     EnrollmentSerializer,
@@ -153,6 +155,21 @@ class CourseViewSet(viewsets.ModelViewSet):
         qs = course.enrollments.select_related('student').order_by('student__first_name')
         page = self.paginate_queryset(qs)
         return self.get_paginated_response(EnrollmentSerializer(page, many=True).data)
+
+
+class AskCourseQuestionView(APIView):
+    """O'quvchi: kurs mavzusi bo'yicha tushunmagan narsasini AI'dan so'raydi."""
+
+    permission_classes = [RequirePerm('course.ask')]
+    throttle_scope = 'ai'
+
+    def post(self, request, pk):
+        serializer = AskCourseQuestionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        answer = services.ask_course_question(
+            student=request.user, course_id=pk, question=serializer.validated_data['question'],
+        )
+        return Response({'answer': answer})
 
 
 class LessonViewSet(viewsets.ModelViewSet):

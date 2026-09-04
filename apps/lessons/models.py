@@ -284,6 +284,33 @@ class CameraRequest(TimeStampedUUIDModel):
         return f'{self.student.username} @ {self.lesson.title} [camera requested]'
 
 
+class LiveKitPermission(TimeStampedUUIDModel):
+    """O'qituvchi bergan mikrofon/kamera/ekran ulashish ruxsati — BAZADA
+    saqlanadi (2026-09-04 tuzatildi).
+
+    Avval ruxsat faqat LiveKit'ning JORIY sessiyasiga jonli yozilardi —
+    o'quvchi tarmoq uzilib qayta ulansa (odatiy holat), yangi token hech
+    narsani bilmay, ruxsat "yo'qolib" qolardi. Endi `issue_room_token()`
+    har safar shu jadvaldan o'qiydi — qayta ulanganda ham ruxsat saqlanadi.
+    LiveKit API orqali jonli yangilash ham davom etadi (darhol ta'sir uchun,
+    o'quvchi HOZIR ulangan bo'lsa) — bu shunchaki qo'shimcha tezlik uchun,
+    haqiqiy manba shu jadval."""
+
+    lesson = ForeignKey('lessons.Lesson', CASCADE, related_name='livekit_permissions')
+    student = ForeignKey(settings.AUTH_USER_MODEL, CASCADE, related_name='livekit_permissions')
+    mic = BooleanField(default=False)
+    camera = BooleanField(default=False)
+    screen_share = BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(fields=['lesson', 'student'], name='unique_lesson_student_livekit_permission'),
+        ]
+
+    def __str__(self):
+        return f'{self.student.username} @ {self.lesson.title} [mic={self.mic} camera={self.camera}]'
+
+
 class LessonRating(TimeStampedUUIDModel):
     """O'quvchi tugagan darsga baho beradi — o'qituvchi/kurs sifatini kuzatish uchun."""
 

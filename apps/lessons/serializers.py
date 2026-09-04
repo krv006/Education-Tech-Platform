@@ -85,6 +85,10 @@ class RateLessonSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True, default='')
 
 
+class AskCourseQuestionSerializer(serializers.Serializer):
+    question = serializers.CharField(max_length=1000)
+
+
 class ScheduleLessonsSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
     days = serializers.ListField(
