@@ -344,6 +344,17 @@ def auto_finish_expired_lessons(*, now=None) -> int:
     loyihada Celery yo'q, xuddi send_deadline_reminders kabi). Video xonasi
     ham bir vaqtda o'chiriladi (apps.live.services.end_room) — faqat status
     emas, ishtirokchilar ham chiqarib yuboriladi.
+
+    DIQQAT (2026-09-05 topilgan, production): `finish_lesson` o'zi yozuvni
+    FINALIZE qilmaydi — bu odatda frontend'ning alohida
+    `finalize_recording_video`/`finalize_recording_audio` so'rovlariga
+    bog'liq, ular esa faqat o'qituvchi QO'LDA "Yakunlash"ni bosgan yo'ldan
+    yuboriladi. O'qituvchi shu yerga — auto-finish yo'liga — tushib qolgan
+    bo'lsa (frontend hech qachon "Yakunlash"ni chaqirmagan), o'sha
+    so'rovlar HECH QACHON kelmaydi va yozuv abadiy "recording" holatida
+    qotib qolardi, dars "finished" bo'lganidan keyin ham. Shuning uchun
+    bu yerda `_ensure_recording_finalized` orqali mavjud bo'lgan
+    bo'lak(lar) backend tomonidan o'zi finalize qilinadi.
     """
     now = now or timezone.now()
     finished = 0
@@ -363,6 +374,11 @@ def auto_finish_expired_lessons(*, now=None) -> int:
             continue
         finish_lesson(teacher=lesson.course.teacher, lesson=lesson)
         try:
+            _ensure_recording_finalized(lesson)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger('apps').exception('auto_finish_expired_lessons: recording finalize failed')
+        try:
             from apps.live import services as live_services
             live_services.end_room(lesson)
         except Exception:  # noqa: BLE001
@@ -370,6 +386,34 @@ def auto_finish_expired_lessons(*, now=None) -> int:
             logging.getLogger('apps').exception('auto_finish_expired_lessons: end_room failed')
         finished += 1
     return finished
+
+
+def _ensure_recording_finalized(lesson: Lesson) -> None:
+    """`auto_finish_expired_lessons` darsni majburan yakunlaganda chaqiriladi.
+
+    Oddiy yo'lda (o'qituvchi qo'lda "Yakunlash"ni bosganda) frontend
+    darsni tugatgandan keyin ikkita alohida so'rov yuboradi:
+    `finalize_recording_video` va `finalize_recording_audio`. Shu yerga —
+    auto-finish yo'liga — tushgan darsda bu so'rovlar HECH QACHON
+    kelmaydi (frontend bu holatdan bexabar), shuning uchun mavjud bo'lgan
+    video/audio bo'lak(lar)ini backend o'zi "tayyor" deb belgilaydi va
+    birlashtirishni (yoki bitta tomon bilan yakunlashni) ishga tushiradi —
+    frontend signaliga umuman bog'liq qolmasdan."""
+    from apps.live import services as live_services
+
+    from .models import LessonRecording
+
+    recording = LessonRecording.objects.filter(lesson=lesson).first()
+    if recording is None:
+        return
+    if recording.video_file_name and not recording.video_ready_at:
+        recording.video_ready_at = timezone.now()
+        recording.save(update_fields=['video_ready_at', 'updated_at'])
+    if recording.audio_file_name and not recording.audio_finalized_at:
+        recording.audio_finalized_at = timezone.now()
+        recording.save(update_fields=['audio_finalized_at', 'updated_at'])
+    live_services.maybe_start_merge(lesson.id)
+    live_services.finalize_single_side(lesson.id)
 
 
 @transaction.atomic

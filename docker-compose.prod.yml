@@ -95,6 +95,43 @@ services:
       redis:
         condition: service_started
 
+  # Davriy vazifalar (auto_finish_expired_lessons, send_deadline_reminders).
+  # Loyihada Celery/Celery Beat yo'q — shu konteyner backend bilan bir xil
+  # image'ni ishlatib, oddiy sleep-tsikl bilan cron o'rnini bosadi.
+  # DIQQAT (2026-09-05 topilgan): bu xizmat AVVAL UMUMAN YO'Q EDI —
+  # `auto_finish_expired_lessons` (o'qituvchi "Yakunlash"ni bosmay
+  # ketgan darslarni avtomatik yopadigan, video yozuvni ham finalize
+  # qiladigan xavfsizlik to'ri) kodda yozilgan bo'lsa-da, uni ishga
+  # tushiradigan HECH QANDAY cron/timer production'da sozlanmagan edi —
+  # shu sabab bunday darslar va ularning video yozuvlari abadiy
+  # "live"/"recording" holatida qotib qolar edi.
+  cron:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_ENV: prod
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+      RECORDINGS_DIR: /app/recordings
+      LIVEKIT_API_URL: http://livekit:7880
+    command: >
+      sh -c "sleep 30 &&
+             while true; do
+               python manage.py auto_finish_expired_lessons;
+               python manage.py send_deadline_reminders;
+               sleep 300;
+             done"
+    volumes:
+      - media:/app/media
+      - logs:/app/logs
+      - recordings:/app/recordings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   caddy:
     # Frontend alohida loyihaga ko'chirildi — Caddy endi faqat TLS + API proxy
     image: caddy:2-alpine

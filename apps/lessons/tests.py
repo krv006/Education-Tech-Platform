@@ -1925,3 +1925,104 @@ class AutoFinishExpiredLessonsTests(APITestCase):
         services.auto_finish_expired_lessons()
         stale.refresh_from_db()
         self.assertEqual(stale.status, Lesson.Status.LIVE)
+
+    def test_auto_finish_triggers_merge_when_teacher_never_clicked_finish(self):
+        """2026-09-05 topilgan production xato: o'qituvchi darsni ekrandan
+        shunchaki tashlab ketadi (jonli dars ekranida "Yakunlash" tugmasi
+        yo'q — buni alohida sahifadan qidirib topish kerak), frontend
+        `finalize_recording_video`/`finalize_recording_audio`ni HECH QACHON
+        chaqirmaydi. Auto-finish darsni "finished" qilgandan keyin ham,
+        video+audio bo'laklari mavjud bo'lsa — backend o'zi ularni finalize
+        qilib, birlashtirishni ishga tushirishi kerak."""
+        from unittest.mock import AsyncMock, patch
+
+        from . import services
+        from .models import Lesson, LessonRecording
+
+        recording = LessonRecording.objects.create(
+            lesson=self.expired,
+            video_file_name='video.webm', audio_file_name='audio.webm',
+            status=LessonRecording.Status.RECORDING,
+        )
+        with patch('threading.Thread') as thread_cls, \
+                patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_livekit_cls.return_value.room.delete_room = AsyncMock()
+            mock_livekit_cls.return_value.aclose = AsyncMock()
+            services.auto_finish_expired_lessons()
+        self.expired.refresh_from_db()
+        self.assertEqual(self.expired.status, Lesson.Status.FINISHED)
+        recording.refresh_from_db()
+        self.assertIsNotNone(recording.video_ready_at)
+        self.assertIsNotNone(recording.audio_finalized_at)
+        self.assertEqual(recording.status, LessonRecording.Status.MERGING)
+        thread_cls.assert_called_once()
+
+    def test_auto_finish_completes_video_only_recording_with_no_audio(self):
+        """O'qituvchi hech qachon mikrofon/ovoz yubormagan (yoki audio
+        umuman kelmagan) holatda ham — abandon qilingan yagona tomon
+        (video) yo'qotilmasligi, avtomatik yakunlanishi kerak."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import AsyncMock, patch
+
+        from django.test import override_settings
+
+        from . import services
+        from .models import LessonRecording
+
+        recording = LessonRecording.objects.create(
+            lesson=self.expired, video_file_name='video.webm',
+            status=LessonRecording.Status.RECORDING,
+        )
+        tmp = tempfile.mkdtemp()
+        with override_settings(RECORDINGS_DIR=Path(tmp)), \
+                patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_livekit_cls.return_value.room.delete_room = AsyncMock()
+            mock_livekit_cls.return_value.aclose = AsyncMock()
+            (Path(tmp) / 'video.webm').write_bytes(b'\x00' * 10)
+            services.auto_finish_expired_lessons()
+        recording.refresh_from_db()
+        self.assertEqual(recording.status, LessonRecording.Status.COMPLETED)
+        self.assertEqual(recording.file_name, 'video.webm')
+
+    def test_auto_finish_without_any_recording_does_not_crash(self):
+        """Bu darsda umuman video/audio yozuvi bo'lmasa (LessonRecording
+        yaratilmagan) — auto-finish xatosiz o'tishi kerak."""
+        from unittest.mock import AsyncMock, patch
+
+        from . import services
+        from .models import Lesson
+
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_livekit_cls.return_value.room.delete_room = AsyncMock()
+            mock_livekit_cls.return_value.aclose = AsyncMock()
+            count = services.auto_finish_expired_lessons()
+        self.expired.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertEqual(self.expired.status, Lesson.Status.FINISHED)
+
+    def test_auto_finish_does_not_reset_already_finalized_side(self):
+        """Bitta tomon allaqachon finalize qilingan bo'lsa (masalan
+        o'qituvchi audio finalize'ni bosgan, keyin brauzeri qulab tushgan)
+        — auto-finish uning vaqtini QAYTA yozib yubormasligi kerak, faqat
+        yetishmayotgan tomonni to'ldirishi kerak."""
+        from unittest.mock import AsyncMock, patch
+
+        from . import services
+        from .models import LessonRecording
+
+        original_audio_ts = timezone.now() - timedelta(hours=1)
+        recording = LessonRecording.objects.create(
+            lesson=self.expired,
+            video_file_name='video.webm', audio_file_name='audio.webm',
+            audio_finalized_at=original_audio_ts,
+            status=LessonRecording.Status.RECORDING,
+        )
+        with patch('threading.Thread'), \
+                patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_livekit_cls.return_value.room.delete_room = AsyncMock()
+            mock_livekit_cls.return_value.aclose = AsyncMock()
+            services.auto_finish_expired_lessons()
+        recording.refresh_from_db()
+        self.assertEqual(recording.audio_finalized_at, original_audio_ts)
+        self.assertIsNotNone(recording.video_ready_at)
