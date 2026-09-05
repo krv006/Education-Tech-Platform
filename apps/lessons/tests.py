@@ -118,6 +118,43 @@ class CourseLessonFlowTests(APITestCase):
         resp = self.client.post('/api/v1/live/token/', {'lesson_id': self.lesson_id})
         self.assertEqual(resp.status_code, 403)
 
+    def test_scheduled_lesson_from_past_day_cannot_be_joined(self):
+        """2026-09-05 topilgan xato: eski (kuni allaqachon o'tib ketgan,
+        hech qachon boshlanmagan) SCHEDULED darsga token so'ralganda
+        ABADIY ruxsat berilardi — aslida teskari bo'lishi kerak edi
+        (kelajakdagi darsga muammosiz kirish mumkin edi, eskisiga esa
+        cheklov yo'q edi). Endi faqat kuni o'tib ketgan darslar
+        bloklanadi."""
+        from .models import Course, Lesson
+
+        course = Course.objects.get(id=self.course_id)
+        stale = Lesson.objects.create(
+            course=course, title='Stale scheduled',
+            starts_at=timezone.now() - timedelta(days=2),
+            duration_min=45, status=Lesson.Status.SCHEDULED,
+        )
+        self.auth(self.teacher_token)
+        resp = self.client.post('/api/v1/live/token/', {'lesson_id': str(stale.id)})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_scheduled_lesson_today_can_be_joined_before_its_exact_time(self):
+        """Bugunga rejalashtirilgan darsga aniq soatini kutmasdan
+        kirish mumkin bo'lishi kerak (o'qituvchi xonani oldindan
+        tayyorlab qo'yishi uchun)."""
+        from .models import Course, Lesson
+
+        course = Course.objects.get(id=self.course_id)
+        now = timezone.localtime(timezone.now())
+        end_of_day = now.replace(hour=23, minute=59, second=0, microsecond=0)
+        later_today = Lesson.objects.create(
+            course=course, title='Later today',
+            starts_at=min(now + timedelta(hours=1), end_of_day),
+            duration_min=45, status=Lesson.Status.SCHEDULED,
+        )
+        self.auth(self.teacher_token)
+        resp = self.client.post('/api/v1/live/token/', {'lesson_id': str(later_today.id)})
+        self.assertEqual(resp.status_code, 200)
+
     def test_parent_sees_only_linked_child_attendance(self):
         self.auth(self.parent_token)
         self.client.post(f'/api/v1/courses/{self.course_id}/enroll/', {'student_id': self.child_id})

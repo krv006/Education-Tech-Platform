@@ -85,6 +85,18 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         raise PermissionDenied("Siz bu darsdan chetlashtirilgansiz.")
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):
         raise ValidationError('Dars tugagan yoki bekor qilingan.')
+    # Bugun/kelajakka rejalashtirilgan darsga istalgan vaqt kirish mumkin
+    # (aniq soatini kutish shart emas). Faqat KUNI allaqachon o'tib ketgan,
+    # hech qachon boshlanmagan (hamon SCHEDULED) darslar bloklanadi — aks
+    # holda ular abadiy "kirish mumkin" bo'lib qolar edi. Frontend tugmani
+    # ham shu qoidaga ko'ra o'chiradi (apps/live/services.py bilan bir xil
+    # mantiq — lekin bu yerda HAQIQIY himoya: to'g'ridan-to'g'ri havola
+    # orqali chetlab o'tib bo'lmaydi).
+    if lesson.status == Lesson.Status.SCHEDULED:
+        local_now = timezone.localtime(timezone.now())
+        local_starts_at = timezone.localtime(lesson.starts_at)
+        if local_starts_at.date() < local_now.date():
+            raise ValidationError("Bu darsning vaqti allaqachon o'tib ketgan.")
 
     # O'quvchi default mikrofon, kamera va ekran share qila olmaydi —
     # o'qituvchi ruxsat berganda grant_mic()/grant_camera()/grant_screen_share()
