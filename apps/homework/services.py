@@ -309,6 +309,64 @@ def delete_assignment(*, teacher: User, assignment_id) -> None:
     a.delete()
 
 
+_UNSET = object()  # "maydon umuman yuborilmadi" — bo'sh qiymatdan (o'chirish) farqlash uchun
+
+
+def update_assignment(
+    *, teacher: User, assignment_id, title=_UNSET, description=_UNSET, body=_UNSET,
+    due_at=_UNSET, skill_key=_UNSET, lesson_id=_UNSET, extra_instructions=_UNSET,
+    attachment=_UNSET,
+) -> dict:
+    """Vazifani qisman yangilaydi (PATCH) — faqat yuborilgan maydonlar
+    o'zgaradi, `create_assignment` bilan bir xil validatsiya."""
+    a = _get_assignment(assignment_id)
+    if a.course.teacher_id != teacher.id:
+        raise PermissionDenied("Faqat kurs o'qituvchisi vazifani tahrirlashi mumkin.")
+
+    fields = []
+    if title is not _UNSET:
+        if not (title or '').strip():
+            raise ValidationError({'title': 'Vazifa nomi majburiy.'})
+        a.title = title.strip()
+        fields.append('title')
+    if description is not _UNSET:
+        a.description = (description or '').strip()
+        fields.append('description')
+    if body is not _UNSET:
+        a.body = sanitize_html(body)
+        fields.append('body')
+    if due_at is not _UNSET:
+        a.due_at = _parse_due(due_at)
+        fields.append('due_at')
+    if skill_key is not _UNSET:
+        skill_key = (skill_key or '').strip().lower()
+        if skill_key and skill_key not in ai.SKILLS:
+            raise ValidationError({'skill_key': f"Noto'g'ri ko'nikma: {sorted(ai.SKILLS)}"})
+        a.skill_key = skill_key
+        fields.append('skill_key')
+    if lesson_id is not _UNSET:
+        a.lesson = _resolve_lesson(course=a.course, lesson_id=lesson_id)
+        fields.append('lesson')
+    if extra_instructions is not _UNSET:
+        a.extra_instructions = (extra_instructions or '').strip()
+        fields.append('extra_instructions')
+    if attachment is not _UNSET and attachment is not None:
+        ext = Path(attachment.name or '').suffix.lower()
+        if ext not in ATTACHMENT_EXTENSIONS:
+            raise ValidationError({'attachment': (
+                f"'{ext}' qo'llab-quvvatlanmaydi. Mumkin: {', '.join(sorted(ATTACHMENT_EXTENSIONS))}"
+            )})
+        if attachment.size > ai.MAX_FILE_SIZE_MB * 1024 * 1024:
+            raise ValidationError({'attachment': f'Fayl {ai.MAX_FILE_SIZE_MB} MB dan katta.'})
+        a.attachment = attachment
+        a.attachment_name = (attachment.name or 'vazifa')[:255]
+        fields += ['attachment', 'attachment_name']
+
+    if fields:
+        a.save(update_fields=fields)
+    return _assignment_dict(a)
+
+
 def assignment_file(*, user: User, assignment_id) -> tuple:
     a = _get_assignment(assignment_id)
     if not _can_view_course(user, a.course):

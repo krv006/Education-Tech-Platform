@@ -119,6 +119,57 @@ class HomeworkTests(TestCase):
         r2 = self.create_assignment(lesson_id=str(lesson.id), title='Ikkinchi vazifa')
         self.assertEqual(r2.status_code, 201)
 
+    def test_teacher_edits_deadline_only(self):
+        """PATCH — frontendda \"Vazifani tahrirlash\" oynasida deadline
+        o'zgartirish 405 (Method not allowed) berardi, endpoint yo'q edi."""
+        assignment_id = self.create_assignment().data['id']
+        new_due = (timezone.now() + timedelta(days=3)).isoformat()
+        r = self.api(self.teacher).patch(
+            f'/api/v1/homework/assignments/{assignment_id}/', {'due_at': new_due}, format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNotNone(r.data['due_at'])
+        # boshqa maydonlarga tegilmadi
+        self.assertEqual(r.data['title'], 'Kvadrat tenglamalar')
+
+    def test_edit_clears_deadline_when_sent_empty(self):
+        assignment_id = self.create_assignment(due_at=timezone.now().isoformat()).data['id']
+        r = self.api(self.teacher).patch(
+            f'/api/v1/homework/assignments/{assignment_id}/', {'due_at': ''}, format='json',
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.data['due_at'])
+
+    def test_edit_title_and_body(self):
+        assignment_id = self.create_assignment().data['id']
+        r = self.api(self.teacher).patch(f'/api/v1/homework/assignments/{assignment_id}/', {
+            'title': 'Yangilangan nom', 'body': '<p>Yangi matn</p>',
+        }, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['title'], 'Yangilangan nom')
+        self.assertIn('Yangi matn', r.data['body'])
+
+    def test_edit_requires_owner_teacher(self):
+        assignment_id = self.create_assignment().data['id']
+        r = self.api(self.other_teacher).patch(
+            f'/api/v1/homework/assignments/{assignment_id}/', {'title': 'X'}, format='json',
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_student_cannot_edit(self):
+        assignment_id = self.create_assignment().data['id']
+        r = self.api(self.student).patch(
+            f'/api/v1/homework/assignments/{assignment_id}/', {'title': 'X'}, format='json',
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_edit_empty_title_rejected(self):
+        assignment_id = self.create_assignment().data['id']
+        r = self.api(self.teacher).patch(
+            f'/api/v1/homework/assignments/{assignment_id}/', {'title': '  '}, format='json',
+        )
+        self.assertEqual(r.status_code, 400)
+
     def test_unfinished_lesson_rejected(self):
         lesson = Lesson.objects.create(
             course=self.course, title='Kelayotgan dars', starts_at=timezone.now(),

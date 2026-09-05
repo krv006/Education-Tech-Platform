@@ -44,9 +44,26 @@ class AssignmentListCreateView(APIView):
 
 class AssignmentDetailView(APIView):
     permission_classes = [RequirePerm('homework.view')]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request, assignment_id):
         return Response(services.get_assignment(user=request.user, assignment_id=assignment_id))
+
+    def patch(self, request, assignment_id):
+        """Vazifani tahrirlash — faqat yuborilgan maydonlar o'zgaradi
+        (masalan faqat `due_at`, boshqa hech narsaga tegilmaydi)."""
+        if not user_has_perm(request.user, 'homework.assign'):
+            return Response({'detail': "Tahrirlash faqat o'qituvchi uchun."}, status=403)
+
+        kwargs = {}
+        for field in ('title', 'description', 'body', 'due_at', 'skill_key', 'lesson_id', 'extra_instructions'):
+            if field in request.data:
+                kwargs[field] = request.data.get(field)
+        if 'attachment' in request.FILES:
+            kwargs['attachment'] = request.FILES.get('attachment')
+
+        data = services.update_assignment(teacher=request.user, assignment_id=assignment_id, **kwargs)
+        return Response(data)
 
     def delete(self, request, assignment_id):
         if not user_has_perm(request.user, 'homework.assign'):
