@@ -4,8 +4,14 @@
 port: 7880
 rtc:
   tcp_port: 7881
-  port_range_start: 50000
-  port_range_end: 51000
+  # UDP mux — barcha WebRTC media BITTA portdan o'tadi (port range emas).
+  # 2026-09-05: `port_range_start/end` (50000-51000) da har bir ishtirokchi
+  # ulanishi alohida port band qilar edi — bu ~30-50 parallel darsdan keyin
+  # portlar tugab qolishiga olib kelardi (server qanchalik kuchli bo'lishidan
+  # qat'iy nazar). `udp_port` o'rnatilsa, `port_range_start/end` ishlatilmaydi
+  # (LiveKit hujjati: docs.livekit.io/home/self-hosting/ports-firewall) —
+  # LiveKit Cloud'ning o'zi ham xuddi shu usul (ICE/UDP mux) bilan miqyoslanadi.
+  udp_port: 7882
   # Serverning tashqi IP sini STUN orqali avtomatik aniqlaydi.
   # Ishlamasa: docker-compose.prod.yml da command ga --node-ip <SERVER_PUBLIC_IP> qo'shing.
   use_external_ip: true

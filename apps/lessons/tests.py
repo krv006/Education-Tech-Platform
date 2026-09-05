@@ -908,7 +908,13 @@ class AudioChunkUploadTests(APITestCase):
         self.assertEqual(recording.status, self.LessonRecording.Status.RECORDING)
 
     def test_finalize_after_video_ready_triggers_merge_thread(self):
+        """2026-09-05: merge endi xom `threading.Thread` emas, cheklangan
+        `live_services._merge_executor` pool'iga (`ThreadPoolExecutor`)
+        yuboriladi — shuning uchun `submit()`ni tekshiramiz, `threading.
+        Thread`ni emas."""
         from unittest.mock import patch
+
+        from apps.live import services as live_services
 
         recording = self.LessonRecording.objects.create(
             lesson=self.lesson, egress_id='EG_x',
@@ -919,21 +925,17 @@ class AudioChunkUploadTests(APITestCase):
         self.api(self.teacher).post(
             f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': c1}, format='multipart',
         )
-        with patch('threading.Thread') as thread_cls:
+        with patch.object(live_services._merge_executor, 'submit') as submit:
             r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
         self.assertEqual(r.status_code, 204)
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
-        thread_cls.assert_called_once()
-        args, kwargs = thread_cls.call_args
-        from apps.live import services as live_services
-        self.assertEqual(kwargs['target'], live_services._merge_recording)
-        self.assertEqual(kwargs['args'], (recording.pk,))
+        submit.assert_called_once_with(live_services._run_merge_in_pool, recording.pk)
 
     def test_maybe_start_merge_is_idempotent(self):
         """Video va audio ikkalasi tayyor bo'lganda ikki marta chaqirilsa
         ham (video finalize HAM, audio finalize HAM chaqirishi mumkin) —
-        faqat BIR marta thread ishga tushadi."""
+        faqat BIR marta merge navbatga qo'yiladi."""
         from unittest.mock import patch
 
         from apps.live import services as live_services
@@ -944,10 +946,10 @@ class AudioChunkUploadTests(APITestCase):
             audio_file_name='audio.webm', audio_finalized_at=timezone.now(),
             status=self.LessonRecording.Status.RECORDING,
         )
-        with patch('threading.Thread') as thread_cls:
+        with patch.object(live_services._merge_executor, 'submit') as submit:
             live_services.maybe_start_merge(self.lesson.id)
             live_services.maybe_start_merge(self.lesson.id)
-        thread_cls.assert_called_once()
+        submit.assert_called_once()
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
 
@@ -1257,6 +1259,8 @@ class AudioChunkUploadTests(APITestCase):
     def test_video_chunks_append_and_finalize_triggers_merge_with_audio(self):
         from unittest.mock import patch
 
+        from apps.live import services as live_services
+
         c1 = self.SimpleUploadedFile('c.webm', b'VVVV', content_type='video/webm')
         r = self.api(self.teacher).post(
             f'/api/v1/lessons/{self.lesson.id}/recording/video/',
@@ -1272,12 +1276,12 @@ class AudioChunkUploadTests(APITestCase):
             f'/api/v1/lessons/{self.lesson.id}/recording/audio/', {'chunk': a1}, format='multipart',
         )
         self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/video/finalize/')
-        with patch('threading.Thread') as thread_cls:
+        with patch.object(live_services._merge_executor, 'submit') as submit:
             r = self.api(self.teacher).post(f'/api/v1/lessons/{self.lesson.id}/recording/audio/finalize/')
         self.assertEqual(r.status_code, 204)
         recording.refresh_from_db()
         self.assertEqual(recording.status, self.LessonRecording.Status.MERGING)
-        thread_cls.assert_called_once()
+        submit.assert_called_once()
 
     @staticmethod
     def _make_test_video(path):
@@ -2029,7 +2033,9 @@ class AutoFinishExpiredLessonsTests(APITestCase):
             video_file_name='video.webm', audio_file_name='audio.webm',
             status=LessonRecording.Status.RECORDING,
         )
-        with patch('threading.Thread') as thread_cls, \
+        from apps.live import services as live_services
+
+        with patch.object(live_services._merge_executor, 'submit') as submit, \
                 patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
             mock_livekit_cls.return_value.room.delete_room = AsyncMock()
             mock_livekit_cls.return_value.aclose = AsyncMock()
@@ -2040,7 +2046,7 @@ class AutoFinishExpiredLessonsTests(APITestCase):
         self.assertIsNotNone(recording.video_ready_at)
         self.assertIsNotNone(recording.audio_finalized_at)
         self.assertEqual(recording.status, LessonRecording.Status.MERGING)
-        thread_cls.assert_called_once()
+        submit.assert_called_once()
 
     def test_auto_finish_completes_video_only_recording_with_no_audio(self):
         """O'qituvchi hech qachon mikrofon/ovoz yubormagan (yoki audio
@@ -2103,7 +2109,9 @@ class AutoFinishExpiredLessonsTests(APITestCase):
             audio_finalized_at=original_audio_ts,
             status=LessonRecording.Status.RECORDING,
         )
-        with patch('threading.Thread'), \
+        from apps.live import services as live_services
+
+        with patch.object(live_services._merge_executor, 'submit'), \
                 patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
             mock_livekit_cls.return_value.room.delete_room = AsyncMock()
             mock_livekit_cls.return_value.aclose = AsyncMock()

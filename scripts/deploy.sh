@@ -50,7 +50,7 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   ufw allow 443/tcp >/dev/null
   ufw allow 443/udp >/dev/null
   ufw allow 7881/tcp >/dev/null
-  ufw allow 50000:50100/udp >/dev/null
+  ufw allow 7882/udp >/dev/null
 fi
 
 # ── 4. Docker stack — build + up

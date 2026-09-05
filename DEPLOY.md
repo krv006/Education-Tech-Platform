@@ -15,7 +15,7 @@ Internet ──443──> Caddy (TLS avto, Let's Encrypt)
                    ├── /static      -> backend (whitenoise)
                    ├── /media       -> umumiy volume (file_server)
                    └── /livekit     -> livekit:7880 (WebSocket signaling)
-Internet ──7881/tcp, 50000-50100/udp──> LiveKit (WebRTC media, to'g'ridan-to'g'ri)
+Internet ──7881/tcp, 7882/udp──> LiveKit (WebRTC media, to'g'ridan-to'g'ri, UDP mux — bitta port)
 backend ──> o'qituvchi brauzeridan bo'lak-bo'lak yuklangan video/audio -> `recordings`
             volume'ga yoziladi va birlashtiriladi (auth stream orqali beriladi) —
             server-tomon LiveKit Egress ENDI ISHLATILMAYDI (2026-08-28'da olib tashlangan)
@@ -35,7 +35,7 @@ Loglarni ko'rish: `make applog` (hammasi), `make errlog` (faqat xatolar),
 
 - `80/tcp`, `443/tcp`, `443/udp` — Caddy
 - `7881/tcp` — LiveKit TCP fallback
-- `50000-50100/udp` — LiveKit WebRTC media
+- `7882/udp` — LiveKit WebRTC media (UDP mux — bitta port, minglab ulanish)
 
 ## 3. Ishga tushirish — bitta buyruq
 

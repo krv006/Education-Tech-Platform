@@ -1,6 +1,8 @@
 """Live service layer — LiveKit token berish, davomat, diqqat tekshiruvi, share ruxsati."""
 import asyncio
+import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from django.conf import settings
@@ -740,6 +742,32 @@ def unban_participant(*, teacher: User, lesson_id, student_id, request=None) -> 
 # moslab (qayta kodlashsiz) WebM faylga birlashtiriladi. Faqat BITTASI
 # kelsa (ikkinchisi hech qachon kelmasa — brauzer qulab qolgan, ruxsat
 # berilmagan) — MAVJUD bo'lgani bilan yakunlanadi, butunlay yo'qotilmaydi.
+#
+# 2026-09-05: avval har bir merge uchun cheklovsiz `threading.Thread`
+# ochilardi — yuzlab dars bir vaqtda (masalan hammasi 18:00da) tugasa,
+# yuzlab thread + ffmpeg protsess + DB ulanish bir zumda ochilib ketardi
+# (backpressure yo'q). Endi belgilangan sondagi worker'li navbat orqali —
+# ortiqchasi navbatda kutadi, server bir vaqtning o'zida zarba yemaydi.
+_MERGE_WORKERS = int(os.environ.get('RECORDING_MERGE_WORKERS', '8'))
+_merge_executor = ThreadPoolExecutor(max_workers=_MERGE_WORKERS, thread_name_prefix='recording-merge')
+
+
+def _run_merge_in_pool(recording_pk) -> None:
+    """`_merge_executor`ga yuboriladigan qobiq — pool'dagi thread QAYTA
+    ISHLATILADI (bir martalik `threading.Thread`dan farqli), shuning uchun
+    oldingi vazifadan qolgan Django DB ulanishi shu yerda tozalanadi
+    ("the connection is closed" xatosining oldi olinadi). `_merge_recording`
+    o'zi buni bilmaydi — u to'g'ridan-to'g'ri (masalan testlarda, joriy
+    thread/tranzaksiyada) ham chaqirilishi mumkin, shu sabab tozalash
+    faqat SHU qobiqda, pool orqali ishga tushganda qo'llanadi."""
+    from django.db import close_old_connections
+
+    close_old_connections()
+    try:
+        _merge_recording(recording_pk)
+    finally:
+        close_old_connections()
+
 
 def end_room(lesson: Lesson) -> None:
     """LiveKit xonasini BUTUNLAY o'chiradi — barcha ishtirokchilarni (video/
@@ -771,12 +799,10 @@ def end_room(lesson: Lesson) -> None:
 
 def maybe_start_merge(lesson_id) -> None:
     """Video va audio (ikkalasi ham brauzerdan yuklangan) tayyor bo'lsa —
-    fon jarayonida (thread) ffmpeg bilan birlashtiradi. Ikkala tomondan
-    ham (video finalize va audio finalize) chaqiriladi; DB-level atomik
-    status o'tishi (RECORDING -> MERGING) ikki marta ishga tushishining
-    oldini oladi."""
-    import threading
-
+    belgilangan sondagi worker'li fon navbatiga (`_merge_executor`) qo'yib,
+    ffmpeg bilan birlashtiradi. Ikkala tomondan ham (video finalize va audio
+    finalize) chaqiriladi; DB-level atomik status o'tishi (RECORDING ->
+    MERGING) ikki marta ishga tushishining oldini oladi."""
     from apps.lessons.models import LessonRecording
 
     recording = LessonRecording.objects.filter(lesson_id=lesson_id).first()
@@ -791,7 +817,7 @@ def maybe_start_merge(lesson_id) -> None:
     ).update(status=LessonRecording.Status.MERGING)
     if not updated:
         return  # allaqachon merge boshlangan/tugagan
-    threading.Thread(target=_merge_recording, args=(recording.pk,), daemon=True).start()
+    _merge_executor.submit(_run_merge_in_pool, recording.pk)
 
 
 def finalize_single_side(lesson_id) -> None:
