@@ -98,23 +98,38 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         if local_starts_at.date() < local_now.date():
             raise ValidationError("Bu darsning vaqti allaqachon o'tib ketgan.")
 
-    # O'quvchi default mikrofon, kamera va ekran share qila olmaydi —
-    # o'qituvchi ruxsat berganda grant_mic()/grant_camera()/grant_screen_share()
-    # orqali jonli ochiladi (2026-09-04: kamera ham cheklandi, avval erkin edi).
-    publish_sources = None if is_teacher else []
+    # KRITIK XATO (2026-09-05 topilgan, ikki ishtirokchi bilan haqiqiy sinovda):
+    # `can_publish_sources=[]` (bo'sh ro'yxat) LiveKit'da "cheklov YO'Q, hamma
+    # manba OCHIQ" degani — "hech narsa mumkin emas" EMAS (rasmiy hujjatda
+    # tasdiqlangan: https://docs.livekit.io/frontends/reference/tokens-grants/).
+    # Ya'ni oldingi kod ("2026-09-04: kamera ham cheklandi" izohi bilan)
+    # noto'g'ri taxminga asoslangan edi — `can_publish=True` + bo'sh
+    # `can_publish_sources` kombinatsiyasi o'quvchiga darsga kirgan ZAHOTI
+    # mikrofon, kamera VA ekran ulashishni TO'LIQ CHEKLOVSIZ ochib bergan,
+    # grant_mic()/grant_camera()/grant_screen_share() esa amalda hech narsani
+    # QO'SHIMCHA cheklamagan (cheklov boshidanoq yo'q edi). Endi o'quvchi uchun
+    # `can_publish` butunlay YOPIQ boshlanadi — grant_*() funksiyalari uni
+    # (aynan kerakli manba bilan birga) ANIQ ochadi.
     token = (
         AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
         .with_identity(f'user-{user.id}')
         .with_name(user.get_full_name() or user.username)
-        .with_ttl(timedelta(hours=2))
+        # 2026-09-05 topilgan: dars 2 soat davom etishi mumkin (yoki undan
+        # biroz oshib ketishi) — token muddati AYNAN 2 soat bo'lsa, dars
+        # oxiriga yaqin muddat tugab qolishi mumkin edi. LiveKit ulangan
+        # klientga proaktiv yangi token yuboradi (uzilish bo'lmaydi), lekin
+        # muddat tugagandan KEYIN qisqa tarmoq uzilishi + qayta ulanish bir
+        # vaqtga to'g'ri kelsa — nazariy jihatdan xato berishi mumkin. Katta
+        # zaxira bilan bu xavfni butunlay yo'qotamiz (hech qanday zarari yo'q).
+        .with_ttl(timedelta(hours=8))
         .with_grants(
             VideoGrants(
                 room_join=True,
                 room=lesson.room_name,
                 room_admin=is_teacher,
-                can_publish=True,
+                can_publish=is_teacher,
                 can_subscribe=True,
-                can_publish_sources=publish_sources,
+                can_publish_sources=None if is_teacher else [],
             )
         )
     )
@@ -463,7 +478,18 @@ def _livekit_http_url() -> str:
 
 
 def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None) -> bool:
-    """O'qituvchi o'quvchiga ekran ulashish ruxsatini jonli ochadi (LiveKit server API)."""
+    """O'qituvchi o'quvchiga ekran ulashish ruxsatini jonli ochadi (LiveKit server
+    API) — `grant_mic`/`grant_camera` bilan bir xil naqsh: mavjud ruxsatlarni
+    (mikrofon/kamera) saqlab qolib, ustiga faqat ekran ulashishni qo'shadi.
+
+    XATO EDI (2026-09-05 topilgan, ikki ishtirokchi bilan haqiqiy sinovda):
+    avval bu funksiya butun ro'yxatni [CAMERA, MICROPHONE, SCREEN_SHARE,
+    SCREEN_SHARE_AUDIO] bilan QATTIQ ALMASHTIRARDI — ya'ni o'qituvchi FAQAT
+    ekran ulashishga ruxsat bermoqchi bo'lsa ham, o'quvchiga BEXOSDAN kamera
+    va mikrofonni HAM ochib yuborardi (yoki oldin faqat mikrofon berilgan
+    bo'lsa, uni ekran ulashish ruxsati BILAN ALMASHTIRIB, mikrofonni yo'qotib
+    qo'yardi — chunki `update_participant` ro'yxatni to'liq ALMASHTIRADI,
+    qo'shmaydi)."""
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
@@ -472,12 +498,20 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
         raise PermissionDenied("Faqat kurs o'qituvchisi ruxsat beradi.")
 
     async def _update():
+        from livekit.protocol.room import RoomParticipantIdentity
+
         client = LiveKitAPI(
             url=_livekit_http_url(),
             api_key=settings.LIVEKIT_API_KEY,
             api_secret=settings.LIVEKIT_API_SECRET,
         )
         try:
+            info = await client.room.get_participant(RoomParticipantIdentity(
+                room=lesson.room_name, identity=identity,
+            ))
+            sources = set(info.permission.can_publish_sources) | {
+                TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO,
+            }
             await client.room.update_participant(UpdateParticipantRequest(
                 room=lesson.room_name,
                 identity=identity,
@@ -485,12 +519,7 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
                     can_subscribe=True,
                     can_publish=True,
                     can_publish_data=True,
-                    can_publish_sources=[
-                        TrackSource.CAMERA,
-                        TrackSource.MICROPHONE,
-                        TrackSource.SCREEN_SHARE,
-                        TrackSource.SCREEN_SHARE_AUDIO,
-                    ],
+                    can_publish_sources=list(sources),
                 ),
             ))
         finally:

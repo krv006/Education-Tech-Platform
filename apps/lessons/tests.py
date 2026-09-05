@@ -1575,10 +1575,23 @@ class MicPermissionTests(APITestCase):
         return jwt.decode(token, settings.LIVEKIT_API_SECRET, algorithms=['HS256'])
 
     def test_student_token_excludes_camera_and_microphone_by_default(self):
-        """2026-09-04: kamera ham endi ruxsat bilan ochiladi (avval erkin edi)."""
+        """2026-09-04: kamera ham endi ruxsat bilan ochiladi (avval erkin edi).
+
+        KRITIK REGRESSIYA TEKSHIRUVI (2026-09-05, ikki ishtirokchi bilan
+        haqiqiy sinovda topilgan): bo'sh `canPublishSources` ro'yxati LiveKit
+        protokolida "cheklov YO'Q, hamma manba OCHIQ" degani — "hech narsa
+        mumkin emas" EMAS (https://docs.livekit.io/frontends/reference/
+        tokens-grants/). Shuning uchun faqat `canPublishSources`ning bo'sh
+        ekanini tekshirish YETARLI EMAS — bu eski test xuddi shu sababdan
+        soxta xotirjamlik bergan edi (bo'sh ro'yxatda "camera"/"microphone"
+        bo'lishi mumkin emas, lekin bu hech narsani cheklamasdi!). Haqiqiy
+        kafolat — `canPublish: False` bo'lishi kerak (LiveKit'ning "bosh
+        kalit"i, faqat shu chindan bloklaydi)."""
         resp = self.api(self.student).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
         self.assertEqual(resp.status_code, 200)
-        sources = self._decode(resp.data['token'])['video']['canPublishSources']
+        video_claim = self._decode(resp.data['token'])['video']
+        self.assertFalse(video_claim.get('canPublish'))
+        sources = video_claim.get('canPublishSources', [])
         self.assertNotIn('camera', sources)
         self.assertNotIn('microphone', sources)
 
@@ -1586,6 +1599,7 @@ class MicPermissionTests(APITestCase):
         resp = self.api(self.teacher).post('/api/v1/live/token/', {'lesson_id': str(self.lesson.id)})
         self.assertEqual(resp.status_code, 200)
         video_claim = self._decode(resp.data['token'])['video']
+        self.assertTrue(video_claim.get('canPublish'))
         self.assertNotIn('canPublishSources', video_claim)
 
     def test_request_mic_requires_enrollment(self):
@@ -1835,6 +1849,40 @@ class MicPermissionTests(APITestCase):
             sources = set(sent.permission.can_publish_sources)
             self.assertIn(TrackSource.SCREEN_SHARE, sources)
             self.assertIn(TrackSource.MICROPHONE, sources)
+
+    def test_grant_screen_share_preserves_existing_mic_permission(self):
+        """2026-09-05 topilgan xato: `grant_screen_share` avval butun
+        ro'yxatni [CAMERA, MICROPHONE, SCREEN_SHARE, SCREEN_SHARE_AUDIO]
+        bilan QATTIQ ALMASHTIRARDI — o'qituvchi FAQAT ekran ulashishga
+        ruxsat bermoqchi bo'lsa ham, kamera/mikrofonni BEXOSDAN ochib
+        yuborardi, yoki avval FAQAT mikrofon berilgan bo'lsa, uni yo'qotib
+        qo'yardi. Endi `grant_mic`/`grant_camera` bilan bir xil — mavjudini
+        saqlab, faqat ekran ulashishni qo'shadi."""
+        from unittest.mock import AsyncMock, patch
+
+        from livekit.protocol.models import ParticipantInfo, ParticipantPermission, TrackSource
+
+        identity = f'user-{self.student.id}'
+        with patch('apps.live.services.LiveKitAPI') as mock_livekit_cls:
+            mock_client = mock_livekit_cls.return_value
+            mock_client.room.get_participant = AsyncMock(return_value=ParticipantInfo(
+                permission=ParticipantPermission(can_publish_sources=[TrackSource.MICROPHONE]),
+            ))
+            mock_client.room.update_participant = AsyncMock()
+            mock_client.aclose = AsyncMock()
+
+            resp = self.api(self.teacher).post('/api/v1/live/allow-share/', {
+                'lesson_id': str(self.lesson.id), 'identity': identity,
+            })
+            self.assertEqual(resp.status_code, 200)
+
+            sent = mock_client.room.update_participant.call_args.args[0]
+            sources = set(sent.permission.can_publish_sources)
+            self.assertIn(TrackSource.MICROPHONE, sources)
+            self.assertIn(TrackSource.SCREEN_SHARE, sources)
+            self.assertIn(TrackSource.SCREEN_SHARE_AUDIO, sources)
+            # Kamera ATAYLAB so'ralmagan — shuning uchun bexosdan ochilmasligi kerak.
+            self.assertNotIn(TrackSource.CAMERA, sources)
 
 
 class AutoFinishExpiredLessonsTests(APITestCase):
