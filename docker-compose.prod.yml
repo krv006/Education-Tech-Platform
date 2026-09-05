@@ -39,37 +39,6 @@ services:
     depends_on:
       - redis
 
-  # Dars video yozuvi (EduTech.docx) — xonani MP4 ga yozadi, fayl recordings
-  # volume'iga tushadi, backend uni faqat auth stream orqali beradi
-  egress:
-    image: livekit/egress:latest
-    restart: unless-stopped
-    environment:
-      EGRESS_CONFIG_BODY: |
-        api_key: ${LIVEKIT_API_KEY:?}
-        api_secret: ${LIVEKIT_API_SECRET:?}
-        ws_url: ws://livekit:7880
-        redis:
-          address: redis:6379
-        logging:
-          level: info
-    volumes:
-      - recordings:/out
-    # Chrome asosidagi kompozitor uchun katta /dev/shm kerak
-    shm_size: 1gb
-    # LiveKit egress RoomComposite turi uchun 4 CPU'ni QATTIQ TALAB QILADI
-    # (rezolyutsiya/preset'dan qat'iy nazar — bu ish TURIGA qarab, chiqish
-    # hajmiga emas). 3 bilan sinab ko'rildi (2026-08-18/19): xizmat ishga
-    # tushadi, lekin o'zini "bu turdagi ish uchun yetarli emas" deb belgilab,
-    # HAR QANDAY yangi yozuv so'rovini rad etadi ("no response from servers",
-    # ~25s kutgandan keyin) — barcha video yozuvlar ishlamay qoldi.
-    # Tasdiqlangan (egress'ning o'z start-up logi): "minimumCpu": 4.
-    cpus: 4
-    mem_limit: 2g
-    depends_on:
-      - redis
-      - livekit
-
   backend:
     build: .
     restart: unless-stopped
@@ -88,7 +57,7 @@ services:
     volumes:
       - media:/app/media
       - logs:/app/logs   # log fayllar konteyner qayta yaratilsa ham saqlanadi
-      - recordings:/app/recordings   # egress yozgan videolar (faqat auth stream)
+      - recordings:/app/recordings   # o'qituvchi brauzeridan yuklangan video/audio (faqat auth stream orqali beriladi)
     depends_on:
       db:
         condition: service_healthy
