@@ -1,6 +1,7 @@
 """Quizzes service qatlami — barcha yozuvchi biznes-logika shu yerda."""
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.accounts.models import User
@@ -36,9 +37,9 @@ def create_quiz(
     lesson: Lesson | None = None, description: str = '', due_at=None, opens_at=None,
 ) -> Quiz:
     if course.teacher_id != teacher.id:
-        raise PermissionDenied('Bu kurs sizga tegishli emas.')
+        raise PermissionDenied(_('Bu kurs sizga tegishli emas.'))
     if lesson is not None and lesson.course_id != course.id:
-        raise ValidationError({'lesson': 'Bu dars ushbu kursga tegishli emas.'})
+        raise ValidationError({'lesson': _('Bu dars ushbu kursga tegishli emas.')})
 
     quiz = Quiz.objects.create(
         course=course, lesson=lesson, title=title, description=description,
@@ -65,7 +66,7 @@ def create_quiz(
 
 def delete_quiz(*, teacher: User, quiz: Quiz) -> None:
     if quiz.course.teacher_id != teacher.id:
-        raise PermissionDenied('Bu test sizga tegishli emas.')
+        raise PermissionDenied(_('Bu test sizga tegishli emas.'))
     quiz.delete()
 
 
@@ -75,7 +76,7 @@ def submit_attempt(*, student: User, quiz: Quiz, answers: list) -> QuizAttempt:
         course=quiz.course, student=student, status=_ENROLLED,
     ).exists()
     if not is_enrolled:
-        raise PermissionDenied('Siz bu kursga yozilmagansiz.')
+        raise PermissionDenied(_('Siz bu kursga yozilmagansiz.'))
 
     all_questions = list(quiz.questions.all())
     answered_ids = set()
@@ -86,11 +87,11 @@ def submit_attempt(*, student: User, quiz: Quiz, answers: list) -> QuizAttempt:
         question = answer['question']
         selected = answer['selected_option']
         if question.quiz_id != quiz.id:
-            raise ValidationError({'answers': 'Savol ushbu testga tegishli emas.'})
+            raise ValidationError({'answers': _('Savol ushbu testga tegishli emas.')})
         if question.id in answered_ids:
-            raise ValidationError({'answers': "Bir savolga faqat bitta javob yuborilishi mumkin."})
+            raise ValidationError({'answers': _("Bir savolga faqat bitta javob yuborilishi mumkin.")})
         if selected.question_id != question.id:
-            raise ValidationError({'answers': 'Tanlangan variant bu savolga tegishli emas.'})
+            raise ValidationError({'answers': _('Tanlangan variant bu savolga tegishli emas.')})
         answered_ids.add(question.id)
 
         is_correct = selected.is_correct

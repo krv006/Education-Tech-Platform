@@ -1,6 +1,7 @@
 """Chat views — yupqa qatlam: HTTP <-> chat services/selectors."""
 from django.db.models import Prefetch
 from django.http import FileResponse
+from django.utils.translation import gettext_lazy as _
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -119,11 +120,11 @@ class ChatFileView(APIView):
         try:
             msg = Message.objects.select_related('room').get(pk=message_id)
         except (Message.DoesNotExist, ValueError, TypeError):
-            raise NotFound('Xabar topilmadi.')
+            raise NotFound(_('Xabar topilmadi.'))
         if not selectors.can_read(request.user, msg.room):
-            raise PermissionDenied('Ruxsat yo\'q.')
+            raise PermissionDenied(_('Ruxsat yo\'q.'))
         if not msg.file:
-            raise NotFound('Fayl yo\'q.')
+            raise NotFound(_('Fayl yo\'q.'))
         resp = FileResponse(msg.file.open('rb'), content_type='application/pdf')
         resp['Content-Disposition'] = f'inline; filename="{msg.file.name.split("/")[-1]}"'
         resp['Cache-Control'] = 'no-store'

@@ -3,6 +3,7 @@
 Biznes-logika services.py da, ko'rish huquqi selectors.py da, ruxsatlar
 apps.core.permissions registry'sida.
 """
+from django.utils.translation import gettext_lazy as _
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
@@ -33,7 +34,7 @@ def _get_quiz(user: User, pk) -> Quiz:
     try:
         return selectors.quizzes_for(user).get(pk=pk)
     except (Quiz.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Test topilmadi.')
+        raise NotFound(_('Test topilmadi.'))
 
 
 class QuizListCreateView(generics.ListCreateAPIView):

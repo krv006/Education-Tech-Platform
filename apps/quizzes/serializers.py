@@ -1,3 +1,4 @@
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from .models import AnswerResponse, Option, Question, Quiz, QuizAttempt
@@ -20,9 +21,9 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
 
     def validate_options(self, options):
         if len(options) < 2:
-            raise serializers.ValidationError("Har bir savolda kamida 2 ta variant bo'lishi kerak.")
+            raise serializers.ValidationError(_("Har bir savolda kamida 2 ta variant bo'lishi kerak."))
         if sum(1 for o in options if o.get('is_correct')) != 1:
-            raise serializers.ValidationError("Har bir savolda aynan 1 ta to'g'ri variant belgilanishi kerak.")
+            raise serializers.ValidationError(_("Har bir savolda aynan 1 ta to'g'ri variant belgilanishi kerak."))
         return options
 
 
@@ -37,7 +38,7 @@ class QuizCreateSerializer(serializers.ModelSerializer):
 
     def validate_questions(self, questions):
         if not questions:
-            raise serializers.ValidationError("Kamida 1 ta savol bo'lishi kerak.")
+            raise serializers.ValidationError(_("Kamida 1 ta savol bo'lishi kerak."))
         return questions
 
 
@@ -119,7 +120,7 @@ class AttemptSubmitSerializer(serializers.Serializer):
 
     def validate_answers(self, answers):
         if not answers:
-            raise serializers.ValidationError("Kamida 1 ta javob yuborilishi kerak.")
+            raise serializers.ValidationError(_("Kamida 1 ta javob yuborilishi kerak."))
         return answers
 
 

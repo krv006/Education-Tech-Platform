@@ -3,6 +3,7 @@ import re
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.accounts.models import User
@@ -40,16 +41,16 @@ def send_notification(
     link_type: str = '', link_id: str = '',
 ) -> Notification:
     if target_type not in Notification.Target.values:
-        raise ValidationError({'target_type': "'user' yoki 'all' bo'lishi kerak."})
+        raise ValidationError({'target_type': _("'user' yoki 'all' bo'lishi kerak.")})
     clean = sanitize_html(description)
     if not clean:
-        raise ValidationError({'description': "Xabar matni bo'sh bo'lishi mumkin emas."})
+        raise ValidationError({'description': _("Xabar matni bo'sh bo'lishi mumkin emas.")})
 
     if target_type == Notification.Target.USER:
         try:
             recipients = [User.objects.get(pk=user_id)]
         except (User.DoesNotExist, ValueError, TypeError):
-            raise NotFound('Foydalanuvchi topilmadi.')
+            raise NotFound(_('Foydalanuvchi topilmadi.'))
     else:
         recipients = list(User.objects.exclude(pk=sender.pk))
 
@@ -73,7 +74,7 @@ def mark_read(*, user: User, notification_id) -> NotificationRecipient:
     try:
         recipient = NotificationRecipient.objects.get(notification_id=notification_id, user=user)
     except (NotificationRecipient.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Bildirishnoma topilmadi.')
+        raise NotFound(_('Bildirishnoma topilmadi.'))
     if recipient.read_at is None:
         recipient.read_at = timezone.now()
         recipient.save(update_fields=['read_at'])

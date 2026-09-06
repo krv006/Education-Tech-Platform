@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import transaction
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts.models import User
@@ -21,7 +22,7 @@ def _get_lesson(lesson_id) -> Lesson:
     try:
         return Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
 
 
 def _is_teacher(user: User, lesson: Lesson) -> bool:
@@ -54,7 +55,7 @@ def is_math_lesson(lesson: Lesson) -> bool:
 def get_board(*, user: User, lesson_id) -> dict:
     lesson = _get_lesson(lesson_id)
     if not can_view(user, lesson):
-        raise PermissionDenied("Doskani ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Doskani ko'rish huquqingiz yo'q."))
     sheets = list(lesson.board_sheets.all())
     if not sheets:
         sheets = [BoardSheet.objects.create(lesson=lesson, index=0)]
@@ -87,16 +88,16 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
     if stroke.get('type') == 'math':
         if not allow_math:
             raise ValidationError({'stroke': (
-                'Matematik formula bloki faqat matematika kurslari doskasida ishlaydi.'
+                _('Matematik formula bloki faqat matematika kurslari doskasida ishlaydi.')
             )})
         latex = str(stroke.get('latex') or '').strip()
         if not latex:
-            raise ValidationError({'stroke': "Formula bo'sh."})
+            raise ValidationError({'stroke': _("Formula bo'sh.")})
         try:
             x = float(stroke.get('x', 60))
             y = float(stroke.get('y', 60))
         except (TypeError, ValueError):
-            raise ValidationError({'stroke': "Koordinata noto'g'ri."})
+            raise ValidationError({'stroke': _("Koordinata noto'g'ri.")})
         return {
             'type': 'math',
             'latex': latex[:2000],
@@ -109,12 +110,12 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
     if stroke.get('type') == 'text':
         text = str(stroke.get('text') or '').strip()
         if not text:
-            raise ValidationError({'stroke': "Matn bo'sh."})
+            raise ValidationError({'stroke': _("Matn bo'sh.")})
         try:
             x = float(stroke.get('x', 60))
             y = float(stroke.get('y', 60))
         except (TypeError, ValueError):
-            raise ValidationError({'stroke': "Koordinata noto'g'ri."})
+            raise ValidationError({'stroke': _("Koordinata noto'g'ri.")})
         return {
             'type': 'text',
             'text': text[:2000],
@@ -132,7 +133,9 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
             try:
                 return round(max(0, min(limit, float(stroke.get(name, 0)))), 1)
             except (TypeError, ValueError):
-                raise ValidationError({'stroke': f"'{name}' koordinatasi noto'g'ri."})
+                raise ValidationError({
+                    'stroke': _("'%(name)s' koordinatasi noto'g'ri.") % {'name': name},
+                })
 
         clean = {
             'type': kind,
@@ -154,7 +157,7 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
 
     points = stroke.get('points') or []
     if not isinstance(points, list) or len(points) < 2:
-        raise ValidationError({'stroke': 'Kamida 2 nuqta kerak.'})
+        raise ValidationError({'stroke': _('Kamida 2 nuqta kerak.')})
     if len(points) > MAX_STROKE_POINTS:
         points = points[::2][:MAX_STROKE_POINTS]  # siyraklashtirish
     clean = []
@@ -162,7 +165,7 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
         try:
             x, y = float(p[0]), float(p[1])
         except (TypeError, ValueError, IndexError):
-            raise ValidationError({'stroke': "Nuqta formati noto'g'ri."})
+            raise ValidationError({'stroke': _("Nuqta formati noto'g'ri.")})
         clean.append([round(max(0, min(SHEET_W, x)), 1), round(max(0, min(SHEET_H, y)), 1)])
     color = str(stroke.get('color', '#1c1e3a'))[:9]
     width = max(1, min(24, int(stroke.get('width', 3))))
@@ -182,12 +185,12 @@ def _validate_stroke(stroke: dict, *, allow_math: bool = False) -> dict:
 def add_stroke(*, user: User, lesson_id, sheet_index: int, stroke: dict) -> dict:
     lesson = _get_lesson(lesson_id)
     if not can_draw(user, lesson):
-        raise PermissionDenied("Chizish uchun o'qituvchidan ruxsat oling.")
-    sheet, _ = BoardSheet.objects.select_for_update().get_or_create(
+        raise PermissionDenied(_("Chizish uchun o'qituvchidan ruxsat oling."))
+    sheet, _created = BoardSheet.objects.select_for_update().get_or_create(
         lesson=lesson, index=int(sheet_index or 0),
     )
     if len(sheet.strokes) >= MAX_STROKES_PER_SHEET:
-        raise ValidationError("Bu sheet to'ldi — yangisini oching.")
+        raise ValidationError(_("Bu sheet to'ldi — yangisini oching."))
     clean = _validate_stroke(stroke, allow_math=is_math_lesson(lesson))
     clean['id'] = uuid.uuid4().hex[:12]
     clean['by'] = user.first_name or user.username
@@ -204,7 +207,7 @@ def add_stroke(*, user: User, lesson_id, sheet_index: int, stroke: dict) -> dict
 def add_sheet(*, user: User, lesson_id) -> int:
     lesson = _get_lesson(lesson_id)
     if not _is_teacher(user, lesson):
-        raise PermissionDenied("Yangi sheet'ni faqat o'qituvchi ochadi.")
+        raise PermissionDenied(_("Yangi sheet'ni faqat o'qituvchi ochadi."))
     last = lesson.board_sheets.order_by('-index').first()
     index = (last.index + 1) if last else 0
     BoardSheet.objects.create(lesson=lesson, index=index)
@@ -217,16 +220,16 @@ def erase_strokes(*, user: User, lesson_id, sheet_index: int, stroke_ids: list, 
     """O'chirish — sabab MAJBURIY (EduTech.docx: "ochirish sababi bosh bolishi kere emas")."""
     reason = (reason or '').strip()
     if not reason:
-        raise ValidationError({'reason': "O'chirish sababi bo'sh bo'lishi mumkin emas."})
+        raise ValidationError({'reason': _("O'chirish sababi bo'sh bo'lishi mumkin emas.")})
     if not stroke_ids:
-        raise ValidationError({'stroke_ids': "Nimani o'chirish ko'rsatilmadi."})
+        raise ValidationError({'stroke_ids': _("Nimani o'chirish ko'rsatilmadi.")})
     lesson = _get_lesson(lesson_id)
     if not can_draw(user, lesson):
-        raise PermissionDenied("O'chirish uchun ruxsat yo'q.")
+        raise PermissionDenied(_("O'chirish uchun ruxsat yo'q."))
     try:
         sheet = BoardSheet.objects.select_for_update().get(lesson=lesson, index=int(sheet_index or 0))
     except BoardSheet.DoesNotExist:
-        raise NotFound('Sheet topilmadi.')
+        raise NotFound(_('Sheet topilmadi.'))
     ids = set(stroke_ids)
     before = len(sheet.strokes)
     sheet.strokes = [s for s in sheet.strokes if s.get('id') not in ids]
@@ -249,11 +252,11 @@ def erase_strokes(*, user: User, lesson_id, sheet_index: int, stroke_ids: list, 
 def grant_draw(*, teacher: User, lesson_id, student_id) -> bool:
     lesson = _get_lesson(lesson_id)
     if not _is_teacher(teacher, lesson):
-        raise PermissionDenied("Ruxsatni faqat kurs o'qituvchisi beradi.")
+        raise PermissionDenied(_("Ruxsatni faqat kurs o'qituvchisi beradi."))
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
     BoardGrant.objects.get_or_create(lesson=lesson, student=student)
     audit.record(action='board.grant', actor=teacher, target=lesson, meta={'student_id': str(student_id)})
     # WebSocket'ga darhol xabar — aks holda o'quvchi sahifani yangilamaguncha
@@ -418,6 +421,9 @@ def publish_board_pdf(lesson: Lesson):
         room=room,
         sender=lesson.course.teacher,
         text=f'📋 "{lesson.title}" doskasi',
+        kind=Message.Kind.SYSTEM,
+        system_key='board_ready',
+        system_params={'lesson_title': lesson.title},
     )
     with open(path, 'rb') as f:
         msg.file.save(f'doska_{lesson.id}.pdf', File(f), save=False)
@@ -434,10 +440,10 @@ def solve_formula(*, user: User, lesson_id, expr: str) -> dict:
     """
     lesson = _get_lesson(lesson_id)
     if not can_view(user, lesson):
-        raise PermissionDenied("Ruxsat yo'q.")
+        raise PermissionDenied(_("Ruxsat yo'q."))
     if not is_math_lesson(lesson):
         raise ValidationError({'expr': (
-            'Formula yechuvchi faqat matematika kurslarida ishlaydi.'
+            _('Formula yechuvchi faqat matematika kurslarida ishlaydi.')
         )})
     from .math_solver import MathError, solve_math
     try:
@@ -449,10 +455,10 @@ def solve_formula(*, user: User, lesson_id, expr: str) -> dict:
 def pdf_file(*, user: User, lesson_id):
     lesson = _get_lesson(lesson_id)
     if not can_view(user, lesson):
-        raise PermissionDenied("Ruxsat yo'q.")
+        raise PermissionDenied(_("Ruxsat yo'q."))
     path = _pdf_path(lesson)
     if not path.exists():
         path = generate_pdf(lesson)
         if path is None:
-            raise NotFound("Doska bo'sh — PDF yo'q.")
+            raise NotFound(_("Doska bo'sh — PDF yo'q."))
     return path

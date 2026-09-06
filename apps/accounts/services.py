@@ -5,6 +5,7 @@ service'da. Har bir muhim harakat audit'ga tushadi.
 """
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.core import audit
@@ -15,7 +16,7 @@ from .models import Consent, ParentChildLink, TeacherCertificate, User
 @transaction.atomic
 def register_user(*, username: str, password: str, role: str, request=None, **extra) -> User:
     if role not in (User.Role.TEACHER, User.Role.PARENT, User.Role.STUDENT):
-        raise ValidationError({'role': "Faqat o'qituvchi, ota-ona yoki o'quvchi ro'yxatdan o'ta oladi."})
+        raise ValidationError({'role': _("Faqat o'qituvchi, ota-ona yoki o'quvchi ro'yxatdan o'ta oladi.")})
     user = User(username=username, role=role, **extra)
     if role == User.Role.TEACHER:
         # Kira oladi, lekin admin tasdiqlamaguncha kurs/dars ochish kabi
@@ -33,7 +34,7 @@ def approve_teacher(*, admin: User, teacher_id, request=None) -> User:
     try:
         teacher = User.objects.get(pk=teacher_id, role=User.Role.TEACHER)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'qituvchi topilmadi.")
+        raise NotFound(_("O'qituvchi topilmadi."))
     teacher.is_approved = True
     teacher.save(update_fields=['is_approved'])
     audit.record(action='teacher.approve', actor=admin, target=teacher, request=request)
@@ -68,7 +69,7 @@ def request_link(*, parent: User, invite_code: str, request=None) -> tuple[Paren
     try:
         student = User.objects.get(invite_code=invite_code.strip().upper(), role=User.Role.STUDENT)
     except User.DoesNotExist:
-        raise NotFound('Bunday taklif kodi topilmadi.')
+        raise NotFound(_('Bunday taklif kodi topilmadi.'))
 
     link, created = ParentChildLink.objects.get_or_create(
         parent=parent, student=student,
@@ -88,7 +89,7 @@ def respond_link(*, student: User, link_id, action: str, request=None) -> Parent
     try:
         link = ParentChildLink.objects.get(pk=link_id, student=student)
     except ParentChildLink.DoesNotExist:
-        raise NotFound("So'rov topilmadi.")
+        raise NotFound(_("So'rov topilmadi."))
     link.status = (
         ParentChildLink.Status.APPROVED if action == 'approve' else ParentChildLink.Status.DECLINED
     )
@@ -105,8 +106,8 @@ def set_consent(*, parent: User, student: User, kind: str, granted: bool, reques
         parent=parent, student=student, status=ParentChildLink.Status.APPROVED
     ).exists()
     if not is_linked:
-        raise PermissionDenied("Bu o'quvchi sizga bog'lanmagan.")
-    consent, _ = Consent.objects.update_or_create(
+        raise PermissionDenied(_("Bu o'quvchi sizga bog'lanmagan."))
+    consent, _created = Consent.objects.update_or_create(
         student=student, kind=kind,
         defaults={'granted': granted, 'granted_by': parent},
     )
@@ -159,11 +160,11 @@ def login_history(*, viewer: User, student_id=None, limit: int = 50) -> list:
             status=ParentChildLink.Status.APPROVED,
         ).exists()
         if not allowed:
-            raise PermissionDenied("Bu foydalanuvchi login tarixini ko'rish huquqingiz yo'q.")
+            raise PermissionDenied(_("Bu foydalanuvchi login tarixini ko'rish huquqingiz yo'q."))
         try:
             target = User.objects.get(pk=student_id)
         except (User.DoesNotExist, ValueError, TypeError):
-            raise NotFound('Foydalanuvchi topilmadi.')
+            raise NotFound(_('Foydalanuvchi topilmadi.'))
 
     rows = (
         AuditLog.objects
@@ -187,7 +188,7 @@ def delete_certificate(*, teacher: User, certificate_id) -> None:
     try:
         certificate = TeacherCertificate.objects.get(pk=certificate_id, teacher=teacher)
     except (TeacherCertificate.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Sertifikat topilmadi.')
+        raise NotFound(_('Sertifikat topilmadi.'))
     certificate.file.delete(save=False)
     certificate.delete()
 

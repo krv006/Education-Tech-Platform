@@ -13,6 +13,7 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts.models import ParentChildLink, User
@@ -58,14 +59,14 @@ def _get_course(course_id) -> Course:
     try:
         return Course.objects.get(pk=course_id)
     except (Course.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Kurs topilmadi.')
+        raise NotFound(_('Kurs topilmadi.'))
 
 
 def _get_assignment(assignment_id) -> Assignment:
     try:
         return Assignment.objects.select_related('course', 'lesson').get(pk=assignment_id)
     except (Assignment.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Vazifa topilmadi.')
+        raise NotFound(_('Vazifa topilmadi.'))
 
 
 def _get_submission(submission_id) -> Submission:
@@ -74,7 +75,7 @@ def _get_submission(submission_id) -> Submission:
             'assignment__course', 'student',
         ).get(pk=submission_id)
     except (Submission.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Topshiriq topilmadi.')
+        raise NotFound(_('Topshiriq topilmadi.'))
 
 
 def _is_enrolled(user: User, course: Course) -> bool:
@@ -160,7 +161,7 @@ def _parse_due(due_at):
     if isinstance(due_at, str):
         parsed = parse_datetime(due_at)
         if parsed is None:
-            raise ValidationError({'due_at': "Muddat formati noto'g'ri."})
+            raise ValidationError({'due_at': _("Muddat formati noto'g'ri.")})
         due_at = parsed
     if timezone.is_naive(due_at):
         due_at = timezone.make_aware(due_at)
@@ -174,9 +175,9 @@ def _resolve_lesson(*, course: Course, lesson_id) -> Lesson | None:
     try:
         lesson = Lesson.objects.get(pk=lesson_id, course=course)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     if lesson.status != Lesson.Status.FINISHED:
-        raise ValidationError({'lesson_id': "Faqat tugagan darsga vazifa bog'lash mumkin."})
+        raise ValidationError({'lesson_id': _("Faqat tugagan darsga vazifa bog'lash mumkin.")})
     return lesson
 
 
@@ -185,23 +186,27 @@ def create_assignment(*, teacher: User, course_id, title: str, description: str 
                       extra_instructions: str = '', attachment=None) -> dict:
     course = _get_course(course_id)
     if course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi vazifa bera oladi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi vazifa bera oladi."))
     if not (title or '').strip():
-        raise ValidationError({'title': 'Vazifa nomi majburiy.'})
+        raise ValidationError({'title': _('Vazifa nomi majburiy.')})
     skill_key = (skill_key or '').strip().lower()
     if skill_key and skill_key not in ai.SKILLS:
-        raise ValidationError({'skill_key': f"Noto'g'ri ko'nikma: {sorted(ai.SKILLS)}"})
+        raise ValidationError({
+                'skill_key': _("Noto'g'ri ko'nikma: %(skills)s") % {'skills': sorted(ai.SKILLS)},
+            })
     lesson = _resolve_lesson(course=course, lesson_id=lesson_id)
 
     attachment_name = ''
     if attachment is not None:
         ext = Path(attachment.name or '').suffix.lower()
         if ext not in ATTACHMENT_EXTENSIONS:
-            raise ValidationError({'attachment': (
-                f"'{ext}' qo'llab-quvvatlanmaydi. Mumkin: {', '.join(sorted(ATTACHMENT_EXTENSIONS))}"
-            )})
+            raise ValidationError({'attachment': _("'%(ext)s' qo'llab-quvvatlanmaydi. Mumkin: %(allowed)s") % {
+                'ext': ext, 'allowed': ', '.join(sorted(ATTACHMENT_EXTENSIONS)),
+            }})
         if attachment.size > ai.MAX_FILE_SIZE_MB * 1024 * 1024:
-            raise ValidationError({'attachment': f'Fayl {ai.MAX_FILE_SIZE_MB} MB dan katta.'})
+            raise ValidationError({
+                'attachment': _('Fayl %(max_mb)s MB dan katta.') % {'max_mb': ai.MAX_FILE_SIZE_MB},
+            })
         attachment_name = (attachment.name or 'vazifa')[:255]
 
     assignment = Assignment.objects.create(
@@ -305,7 +310,7 @@ def send_deadline_reminders(*, now=None) -> dict:
 def delete_assignment(*, teacher: User, assignment_id) -> None:
     a = _get_assignment(assignment_id)
     if a.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi vazifani o'chira oladi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi vazifani o'chira oladi."))
     a.delete()
 
 
@@ -321,12 +326,12 @@ def update_assignment(
     o'zgaradi, `create_assignment` bilan bir xil validatsiya."""
     a = _get_assignment(assignment_id)
     if a.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi vazifani tahrirlashi mumkin.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi vazifani tahrirlashi mumkin."))
 
     fields = []
     if title is not _UNSET:
         if not (title or '').strip():
-            raise ValidationError({'title': 'Vazifa nomi majburiy.'})
+            raise ValidationError({'title': _('Vazifa nomi majburiy.')})
         a.title = title.strip()
         fields.append('title')
     if description is not _UNSET:
@@ -341,7 +346,9 @@ def update_assignment(
     if skill_key is not _UNSET:
         skill_key = (skill_key or '').strip().lower()
         if skill_key and skill_key not in ai.SKILLS:
-            raise ValidationError({'skill_key': f"Noto'g'ri ko'nikma: {sorted(ai.SKILLS)}"})
+            raise ValidationError({
+                'skill_key': _("Noto'g'ri ko'nikma: %(skills)s") % {'skills': sorted(ai.SKILLS)},
+            })
         a.skill_key = skill_key
         fields.append('skill_key')
     if lesson_id is not _UNSET:
@@ -353,11 +360,13 @@ def update_assignment(
     if attachment is not _UNSET and attachment is not None:
         ext = Path(attachment.name or '').suffix.lower()
         if ext not in ATTACHMENT_EXTENSIONS:
-            raise ValidationError({'attachment': (
-                f"'{ext}' qo'llab-quvvatlanmaydi. Mumkin: {', '.join(sorted(ATTACHMENT_EXTENSIONS))}"
-            )})
+            raise ValidationError({'attachment': _("'%(ext)s' qo'llab-quvvatlanmaydi. Mumkin: %(allowed)s") % {
+                'ext': ext, 'allowed': ', '.join(sorted(ATTACHMENT_EXTENSIONS)),
+            }})
         if attachment.size > ai.MAX_FILE_SIZE_MB * 1024 * 1024:
-            raise ValidationError({'attachment': f'Fayl {ai.MAX_FILE_SIZE_MB} MB dan katta.'})
+            raise ValidationError({
+                'attachment': _('Fayl %(max_mb)s MB dan katta.') % {'max_mb': ai.MAX_FILE_SIZE_MB},
+            })
         a.attachment = attachment
         a.attachment_name = (attachment.name or 'vazifa')[:255]
         fields += ['attachment', 'attachment_name']
@@ -370,16 +379,16 @@ def update_assignment(
 def assignment_file(*, user: User, assignment_id) -> tuple:
     a = _get_assignment(assignment_id)
     if not _can_view_course(user, a.course):
-        raise PermissionDenied("Bu faylni ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu faylni ko'rish huquqingiz yo'q."))
     if not a.attachment:
-        raise NotFound("Bu vazifada biriktirilgan fayl yo'q.")
+        raise NotFound(_("Bu vazifada biriktirilgan fayl yo'q."))
     return a.attachment.path, a.attachment_name or 'vazifa'
 
 
 def list_assignments(*, user: User, course_id) -> list:
     course = _get_course(course_id)
     if not _can_view_course(user, course):
-        raise PermissionDenied("Bu kurs vazifalarini ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu kurs vazifalarini ko'rish huquqingiz yo'q."))
     result = []
     for a in course.assignments.select_related('lesson').all():
         item = _assignment_dict(a)
@@ -401,7 +410,7 @@ def list_assignments(*, user: User, course_id) -> list:
 def get_assignment(*, user: User, assignment_id) -> dict:
     a = _get_assignment(assignment_id)
     if not _can_view_course(user, a.course):
-        raise PermissionDenied("Bu vazifani ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu vazifani ko'rish huquqingiz yo'q."))
     data = _assignment_dict(a)
     if a.course.teacher_id == user.id:
         subs = list(a.submissions.select_related('student', 'assignment'))
@@ -431,24 +440,24 @@ def get_assignment(*, user: User, assignment_id) -> dict:
 
 
 # ── topshirish va AI tekshiruv ──────────────────────────────────────────────
-def submit(*, student: User, assignment_id, upload) -> dict:
+def submit(*, student: User, assignment_id, upload, feedback_language: str = 'uz') -> dict:
     a = _get_assignment(assignment_id)
     if not _is_enrolled(student, a.course):
-        raise PermissionDenied("Bu kursga yozilmagansiz — vazifa topshira olmaysiz.")
+        raise PermissionDenied(_("Bu kursga yozilmagansiz — vazifa topshira olmaysiz."))
     if upload is None:
-        raise ValidationError({'file': 'Fayl majburiy.'})
+        raise ValidationError({'file': _('Fayl majburiy.')})
 
     ext = Path(upload.name or '').suffix.lower()
     if ext not in ai.ALLOWED_EXTENSIONS:
-        raise ValidationError({'file': (
-            f"'{ext}' qo'llab-quvvatlanmaydi. Mumkin: {', '.join(sorted(ai.ALLOWED_EXTENSIONS))}"
-        )})
+        raise ValidationError({'file': _("'%(ext)s' qo'llab-quvvatlanmaydi. Mumkin: %(allowed)s") % {
+            'ext': ext, 'allowed': ', '.join(sorted(ai.ALLOWED_EXTENSIONS)),
+        }})
     if ext in ai.AUDIO_EXTENSIONS and a.skill_key != 'speaking':
-        raise ValidationError({'file': "Audio faqat Speaking vazifalari uchun."})
+        raise ValidationError({'file': _("Audio faqat Speaking vazifalari uchun.")})
     if upload.size > ai.MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise ValidationError({'file': (
-            f'Fayl {upload.size / 1024 / 1024:.1f} MB; chegara {ai.MAX_FILE_SIZE_MB} MB.'
-        )})
+        raise ValidationError({'file': _('Fayl %(size).1f MB; chegara %(max_mb)s MB.') % {
+            'size': upload.size / 1024 / 1024, 'max_mb': ai.MAX_FILE_SIZE_MB,
+        }})
 
     submission = Submission.objects.create(
         assignment=a,
@@ -456,6 +465,7 @@ def submit(*, student: User, assignment_id, upload) -> dict:
         file=upload,
         original_name=(upload.name or 'homework')[:255],
         status=Submission.Status.CHECKING,
+        feedback_language=feedback_language,
     )
     _dispatch_check(submission)
     submission.refresh_from_db()
@@ -477,6 +487,7 @@ def run_check(submission_id) -> None:
             subject_text=a.course.subject,
             skill_key=a.skill_key,
             extra_instructions=a.extra_instructions,
+            feedback_language=submission.feedback_language,
         )
         score = result.get('overall_score')
         overall_score = float(score) if score is not None else None
@@ -520,7 +531,7 @@ def get_submission(*, user: User, submission_id) -> dict:
     is_teacher = s.assignment.course.teacher_id == user.id
     allowed = is_teacher or s.student_id == user.id or _is_parent_of(user, s.student)
     if not allowed:
-        raise PermissionDenied("Bu topshiriqni ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu topshiriqni ko'rish huquqingiz yo'q."))
     return _submission_dict(s, is_teacher=is_teacher)
 
 
@@ -532,14 +543,14 @@ def submission_file(*, user: User, submission_id) -> tuple:
         or _is_parent_of(user, s.student)
     )
     if not allowed:
-        raise PermissionDenied("Bu faylni ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu faylni ko'rish huquqingiz yo'q."))
     return s.file.path, s.original_name
 
 
 def recheck(*, user: User, submission_id) -> dict:
     s = _get_submission(submission_id)
     if s.assignment.course.teacher_id != user.id:
-        raise PermissionDenied("Qayta tekshirishni faqat kurs o'qituvchisi boshlaydi.")
+        raise PermissionDenied(_("Qayta tekshirishni faqat kurs o'qituvchisi boshlaydi."))
     s.status = Submission.Status.CHECKING
     s.error = ''
     s.save(update_fields=['status', 'error', 'updated_at'])
@@ -556,16 +567,16 @@ def review_submission(*, teacher: User, submission_id, overall_score=None,
     Faqat AI tekshirib bo'lgan (PENDING_REVIEW) topshiriqqa tegishli."""
     s = _get_submission(submission_id)
     if s.assignment.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi tasdiqlaydi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi tasdiqlaydi."))
     if s.status != Submission.Status.PENDING_REVIEW:
         raise ValidationError(
-            "Faqat AI tekshirib bo'lgan (ko'rib chiqish kutilayotgan) topshiriqni tasdiqlash mumkin."
+            _("Faqat AI tekshirib bo'lgan (ko'rib chiqish kutilayotgan) topshiriqni tasdiqlash mumkin.")
         )
     if overall_score is not None:
         try:
             s.overall_score = float(overall_score)
         except (TypeError, ValueError):
-            raise ValidationError({'overall_score': "Ball raqam bo'lishi kerak."})
+            raise ValidationError({'overall_score': _("Ball raqam bo'lishi kerak.")})
     if grade:
         s.grade = grade.strip()[:40]
     if result is not None:
@@ -581,9 +592,9 @@ def review_submission(*, teacher: User, submission_id, overall_score=None,
 def record_focus(*, student: User, assignment_id, kind: str) -> dict:
     a = _get_assignment(assignment_id)
     if not _is_enrolled(student, a.course):
-        raise PermissionDenied("Bu kursga yozilmagansiz.")
+        raise PermissionDenied(_("Bu kursga yozilmagansiz."))
     if kind not in AssignmentFocusEvent.Kind.values:
-        raise ValidationError({'kind': 'exit yoki return.'})
+        raise ValidationError({'kind': _('exit yoki return.')})
     AssignmentFocusEvent.objects.create(assignment=a, student=student, kind=kind)
     return {'ok': True}
 
@@ -650,14 +661,14 @@ def get_progress_report(*, user: User, student_id=None) -> dict:
         if not ParentChildLink.objects.filter(
             parent=user, student_id=student_id, status=ParentChildLink.Status.APPROVED,
         ).exists():
-            raise PermissionDenied("Bu o'quvchining hisobotini ko'rish huquqingiz yo'q.")
+            raise PermissionDenied(_("Bu o'quvchining hisobotini ko'rish huquqingiz yo'q."))
         try:
             student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
         except (User.DoesNotExist, ValueError, TypeError):
-            raise NotFound("O'quvchi topilmadi.")
+            raise NotFound(_("O'quvchi topilmadi."))
     else:
         if user.role != User.Role.STUDENT:
-            raise ValidationError({'student_id': 'Bu maydon majburiy.'})
+            raise ValidationError({'student_id': _('Bu maydon majburiy.')})
         student = user
 
     courses = Course.objects.filter(

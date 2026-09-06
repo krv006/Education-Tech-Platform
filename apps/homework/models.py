@@ -98,6 +98,12 @@ class Submission(TimeStampedUUIDModel):
     reviewed_at = DateTimeField(null=True, blank=True)
     error = TextField(blank=True)
     checked_at = DateTimeField(null=True, blank=True)
+    # Topshirilgan payt (`request.LANGUAGE_CODE`, `Accept-Language`dan) saqlanadi
+    # — shu til AI feedback'iga ishlatiladi. O'qituvchi "qayta tekshirish"ni
+    # ancha keyin, BOSHQA so'rov kontekstida bosishi mumkin, shuning uchun
+    # birinchi tekshiruvdagi til shu yerda saqlanib, keyingi qayta
+    # tekshirishlarda ham izchil ishlatiladi (2026-09-06).
+    feedback_language = CharField(max_length=8, default='uz')
 
     class Meta:
         ordering = ['-created_at']

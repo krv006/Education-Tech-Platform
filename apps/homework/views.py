@@ -93,6 +93,7 @@ class SubmitView(APIView):
             student=request.user,
             assignment_id=assignment_id,
             upload=request.FILES.get('file'),
+            feedback_language=request.LANGUAGE_CODE,
         )
         return Response(data, status=201)
 

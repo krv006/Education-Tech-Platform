@@ -43,6 +43,11 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'apps.core.middleware.RequestIDMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    # `Accept-Language` sarlavhasini o'qib, so'rov davomida faol tilni
+    # (uz/ru/en) yoqadi — barcha `gettext_lazy`/`_()` bilan o'ralgan matnlar
+    # shunga qarab tarjima qilinadi. Django hujjatidagi tavsiya joylashuv:
+    # Session'dan keyin, Common'dan oldin.
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -243,7 +248,17 @@ GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.5-flash')
 # Tekshiruv fonda (thread) yuradi; testlar False qilib sinxron ishlatadi
 HOMEWORK_CHECK_ASYNC = True
 
-LANGUAGE_CODE = 'en-us'
+# 'uz' — manba til: kodda yozilgan xato/tekshiruv matnlarining o'zi shu (izoh
+# yozilmagan bo'lsa ham gettext ularni "tarjima kerak emas" deb qabul qiladi).
+# Frontend `Accept-Language: ru`/`en` yuborsa, LocaleMiddleware navbatdagi
+# so'rov uchun mos tilni yoqadi (2026-09-06, ko'p tillik qo'llab-quvvatlash).
+LANGUAGE_CODE = 'uz'
+LANGUAGES = [
+    ('uz', "O'zbekcha"),
+    ('ru', 'Русский'),
+    ('en', 'English'),
+]
+LOCALE_PATHS = [BASE_DIR / 'locale']
 TIME_ZONE = os.getenv('TIME_ZONE', 'Asia/Tashkent')
 USE_I18N = True
 USE_TZ = True

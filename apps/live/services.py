@@ -8,6 +8,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from livekit.api import AccessToken, LiveKitAPI, UpdateParticipantRequest, VideoGrants
 from livekit.protocol.models import ParticipantPermission, TrackSource
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -75,18 +76,18 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
 
     is_teacher = lesson.course.teacher_id == user.id
     is_enrolled = lesson.course.enrollments.filter(
         student=user, status=Enrollment.Status.APPROVED,
     ).exists()
     if not (is_teacher or is_enrolled):
-        raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu darsga kirish huquqingiz yo'q."))
     if not is_teacher and LessonBan.objects.filter(lesson=lesson, student=user).exists():
-        raise PermissionDenied("Siz bu darsdan chetlashtirilgansiz.")
+        raise PermissionDenied(_("Siz bu darsdan chetlashtirilgansiz."))
     if lesson.status in (Lesson.Status.FINISHED, Lesson.Status.CANCELLED):
-        raise ValidationError('Dars tugagan yoki bekor qilingan.')
+        raise ValidationError(_('Dars tugagan yoki bekor qilingan.'))
     # Bugun/kelajakka rejalashtirilgan darsga istalgan vaqt kirish mumkin
     # (aniq soatini kutish shart emas). Faqat KUNI allaqachon o'tib ketgan,
     # hech qachon boshlanmagan (hamon SCHEDULED) darslar bloklanadi — aks
@@ -98,7 +99,7 @@ def issue_room_token(*, user: User, lesson_id, request=None) -> dict:
         local_now = timezone.localtime(timezone.now())
         local_starts_at = timezone.localtime(lesson.starts_at)
         if local_starts_at.date() < local_now.date():
-            raise ValidationError("Bu darsning vaqti allaqachon o'tib ketgan.")
+            raise ValidationError(_("Bu darsning vaqti allaqachon o'tib ketgan."))
 
     # KRITIK XATO (2026-09-05 topilgan, ikki ishtirokchi bilan haqiqiy sinovda):
     # `can_publish_sources=[]` (bo'sh ro'yxat) LiveKit'da "cheklov YO'Q, hamma
@@ -216,13 +217,13 @@ def answer_attention(*, user: User, check_id) -> AttentionCheck:
     try:
         check = AttentionCheck.objects.get(pk=check_id, student=user)
     except (AttentionCheck.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Tekshiruv topilmadi.')
+        raise NotFound(_('Tekshiruv topilmadi.'))
     now = timezone.now()
     deadline = check.due_at + timedelta(seconds=ATTENTION_WINDOW_SEC + ATTENTION_GRACE_SEC)
     if check.answered_at is not None:
         return check
     if now > deadline:
-        raise ValidationError('Vaqt tugadi — bu tekshiruv o\'tkazib yuborilgan.')
+        raise ValidationError(_('Vaqt tugadi — bu tekshiruv o\'tkazib yuborilgan.'))
     check.answered_at = now
     check.save(update_fields=['answered_at'])
     return check
@@ -236,11 +237,11 @@ def record_focus(*, user: User, lesson_id, kind: str) -> dict:
     ogohlantirish, threshold'da (bir marta) — ota-onaga FocusAlert yaratiladi.
     """
     if kind not in FocusEvent.Kind.values:
-        raise ValidationError({'kind': 'exit yoki return.'})
+        raise ValidationError({'kind': _('exit yoki return.')})
     try:
         lesson = Lesson.objects.get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     event = FocusEvent.objects.create(lesson=lesson, student=user, kind=kind)
 
     # O'qituvchiga darhol ko'rinishi kerak (burchakda "diqqat qilmayapti"
@@ -306,12 +307,12 @@ def request_mic(*, user: User, lesson_id, request=None) -> None:
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     is_enrolled = lesson.course.enrollments.filter(
         student=user, status=Enrollment.Status.APPROVED,
     ).exists()
     if not is_enrolled:
-        raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu darsga kirish huquqingiz yo'q."))
 
     from apps.lessons.models import MicRequest
     MicRequest.objects.get_or_create(lesson=lesson, student=user)
@@ -349,12 +350,12 @@ def request_camera(*, user: User, lesson_id, request=None) -> None:
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     is_enrolled = lesson.course.enrollments.filter(
         student=user, status=Enrollment.Status.APPROVED,
     ).exists()
     if not is_enrolled:
-        raise PermissionDenied("Bu darsga kirish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu darsga kirish huquqingiz yo'q."))
 
     from apps.lessons.models import CameraRequest
     CameraRequest.objects.get_or_create(lesson=lesson, student=user)
@@ -389,7 +390,7 @@ def grant_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
 
     identity = f'user-{student.id}'
 
@@ -444,7 +445,7 @@ def deny_camera(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
 
     from apps.lessons.models import CameraRequest
     deleted, _ = CameraRequest.objects.filter(lesson=lesson, student=student).delete()
@@ -495,9 +496,9 @@ def grant_screen_share(*, teacher: User, lesson_id, identity: str, request=None)
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi ruxsat beradi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi ruxsat beradi."))
 
     async def _update():
         from livekit.protocol.room import RoomParticipantIdentity
@@ -543,7 +544,7 @@ def grant_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
 
     identity = f'user-{student.id}'
 
@@ -604,7 +605,7 @@ def deny_mic(*, teacher: User, lesson_id, student_id, request=None) -> bool:
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
 
     from apps.lessons.models import MicRequest
     deleted, _ = MicRequest.objects.filter(lesson=lesson, student=student).delete()
@@ -630,9 +631,9 @@ def _get_owned_lesson(*, teacher: User, lesson_id) -> Lesson:
     try:
         lesson = Lesson.objects.select_related('course').get(pk=lesson_id)
     except (Lesson.DoesNotExist, ValueError, TypeError):
-        raise NotFound('Dars topilmadi.')
+        raise NotFound(_('Dars topilmadi.'))
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi shu amalni bajara oladi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi shu amalni bajara oladi."))
     return lesson
 
 
@@ -650,7 +651,7 @@ def invite_to_lesson(*, teacher: User, lesson_id, student_id=None, request=None)
     if student_id:
         qs = qs.filter(student_id=student_id)
         if not qs.exists():
-            raise NotFound("O'quvchi bu kursga yozilmagan.")
+            raise NotFound(_("O'quvchi bu kursga yozilmagan."))
     students = [e.student for e in qs]
     if not students:
         return 0
@@ -681,7 +682,7 @@ def ban_participant(*, teacher: User, lesson_id, student_id, request=None) -> bo
     try:
         student = User.objects.get(pk=student_id, role=User.Role.STUDENT)
     except (User.DoesNotExist, ValueError, TypeError):
-        raise NotFound("O'quvchi topilmadi.")
+        raise NotFound(_("O'quvchi topilmadi."))
 
     LessonBan.objects.get_or_create(lesson=lesson, student=student, defaults={'banned_by': teacher})
 

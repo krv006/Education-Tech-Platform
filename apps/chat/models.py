@@ -14,6 +14,7 @@ from django.db.models import (
     ForeignKey,
     ImageField,
     Index,
+    JSONField,
     OneToOneField,
     Q,
     TextChoices,
@@ -75,10 +76,25 @@ class ChatRoom(TimeStampedUUIDModel):
 
 
 class Message(TimeStampedUUIDModel):
+    class Kind(TextChoices):
+        USER = 'user', 'Foydalanuvchi'
+        SYSTEM = 'system', 'Tizim'
+
     room = ForeignKey('chat.ChatRoom', CASCADE, related_name='messages')
     sender = ForeignKey('accounts.User', CASCADE, related_name='chat_messages')
     text = TextField()
     file = FileField(upload_to='chat_files/', blank=True)
+    # Tizim tomonidan avtomatik yoziladigan xabarlar (masalan "video yozuvi
+    # tayyor") uchun: `text` hamon bitta (hozircha o'zbekcha) render sifatida
+    # to'ldiriladi (eski client/bildirishnoma preview'lari uchun fallback),
+    # lekin `kind='system'` bo'lganda frontend `system_key`+`system_params`
+    # orqali xabarni HAR BIR ko'ruvchining o'z tilida qayta render qilishi
+    # mumkin — guruh chatida turli tilli o'quvchilar bo'lgani uchun bitta
+    # saqlangan matn hammaga bir xil tilda ko'rinishi to'g'ri emas
+    # (2026-09-06).
+    kind = CharField(max_length=16, choices=Kind.choices, default=Kind.USER)
+    system_key = CharField(max_length=64, blank=True, default='')
+    system_params = JSONField(blank=True, default=dict)
 
     class Meta:
         ordering = ['created_at']

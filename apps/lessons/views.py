@@ -1,6 +1,7 @@
 """Lessons views — yupqa qatlam: HTTP <-> service/selector."""
 from django.db.models import Q
 from django.http import FileResponse
+from django.utils.translation import gettext_lazy as _
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -201,11 +202,11 @@ class LessonViewSet(viewsets.ModelViewSet):
     def rate(self, request, pk=None):
         lesson = self.get_object()
         if lesson.status != 'finished':
-            raise ValidationError('Faqat tugagan darsga baho berish mumkin.')
+            raise ValidationError(_('Faqat tugagan darsga baho berish mumkin.'))
         if not lesson.course.enrollments.filter(
             student=request.user, status=Enrollment.Status.APPROVED,
         ).exists():
-            raise PermissionDenied("Siz bu kursga yozilmagansiz.")
+            raise PermissionDenied(_("Siz bu kursga yozilmagansiz."))
         ser = RateLessonSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         from .models import LessonRating
@@ -246,7 +247,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         lesson = self.get_object()
         chunk = request.FILES.get('chunk')
         if not chunk:
-            raise ValidationError({'chunk': "Fayl bo'lagi yuborilmadi."})
+            raise ValidationError({'chunk': _("Fayl bo'lagi yuborilmadi.")})
         services.upload_recording_audio_chunk(
             teacher=request.user, lesson=lesson, chunk=chunk,
             started_at=request.data.get('started_at') or None,
@@ -271,7 +272,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         lesson = self.get_object()
         chunk = request.FILES.get('chunk')
         if not chunk:
-            raise ValidationError({'chunk': "Fayl bo'lagi yuborilmadi."})
+            raise ValidationError({'chunk': _("Fayl bo'lagi yuborilmadi.")})
         services.upload_recording_video_chunk(
             teacher=request.user, lesson=lesson, chunk=chunk,
             started_at=request.data.get('started_at') or None,
@@ -299,7 +300,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         try:
             lesson = LessonModel.objects.get(pk=pk)
         except (LessonModel.DoesNotExist, ValueError, TypeError):
-            raise NotFound('Dars topilmadi.')
+            raise NotFound(_('Dars topilmadi.'))
         path = services.recording_stream_path(
             lesson=lesson, token=request.query_params.get('t') or '',
         )

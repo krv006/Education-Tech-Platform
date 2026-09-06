@@ -11,7 +11,10 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ['id', 'room', 'sender', 'text', 'file_url', 'created_at']
+        fields = [
+            'id', 'room', 'sender', 'text', 'file_url', 'created_at',
+            'kind', 'system_key', 'system_params',
+        ]
         read_only_fields = ['room', 'sender']
 
     def get_file_url(self, obj) -> str | None:

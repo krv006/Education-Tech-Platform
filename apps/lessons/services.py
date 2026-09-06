@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts import selectors as account_selectors
@@ -26,7 +27,7 @@ def create_course(*, teacher: User, request=None, **data) -> Course:
 @transaction.atomic
 def schedule_lesson(*, teacher: User, course: Course, request=None, **data) -> Lesson:
     if course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs egasi dars qo'sha oladi.")
+        raise PermissionDenied(_("Faqat kurs egasi dars qo'sha oladi."))
     lesson = Lesson.objects.create(course=course, **data)
     audit.record(action='lesson.schedule', actor=teacher, target=lesson, request=request)
     return lesson
@@ -45,7 +46,7 @@ def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[
     from datetime import datetime, timedelta
 
     if course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs egasi dars qo'sha oladi.")
+        raise PermissionDenied(_("Faqat kurs egasi dars qo'sha oladi."))
 
     duration_min = int(
         (datetime.combine(start_date, end_time) - datetime.combine(start_date, start_time)).total_seconds() // 60,
@@ -65,7 +66,7 @@ def schedule_recurring(*, teacher: User, course: Course, title: str, days: list[
             slots.append(slot)
 
     if not slots:
-        raise ValidationError("Berilgan parametrlar bo'yicha hech qanday dars yaratilmaydi.")
+        raise ValidationError(_("Berilgan parametrlar bo'yicha hech qanday dars yaratilmaydi."))
 
     existing = list(Lesson.objects.filter(
         course__teacher=teacher,
@@ -108,7 +109,7 @@ def _get_course(course_id) -> Course:
     try:
         return Course.objects.get(pk=course_id, is_active=True)
     except (Course.DoesNotExist, ValueError):
-        raise NotFound('Kurs topilmadi.')
+        raise NotFound(_('Kurs topilmadi.'))
 
 
 def _resolve_student_ref(student_ref: str) -> User:
@@ -117,7 +118,7 @@ def _resolve_student_ref(student_ref: str) -> User:
     if student is None:
         student = User.objects.filter(role=User.Role.STUDENT, invite_code=student_ref.upper()).first()
     if student is None:
-        raise NotFound("Bunday login yoki taklif kodli o'quvchi topilmadi.")
+        raise NotFound(_("Bunday login yoki taklif kodli o'quvchi topilmadi."))
     return student
 
 
@@ -127,20 +128,20 @@ def _resolve_enroll_target(*, course: Course, by_user: User, student_id=None, st
         return by_user
     if by_user.role == User.Role.PARENT:
         if not student_id or not account_selectors.is_linked(by_user, student_id):
-            raise PermissionDenied("Bu o'quvchi sizga bog'lanmagan.")
+            raise PermissionDenied(_("Bu o'quvchi sizga bog'lanmagan."))
         return User.objects.get(pk=student_id)
     if by_user.role == User.Role.TEACHER:
         if course.teacher_id != by_user.id:
-            raise PermissionDenied("Faqat o'z kursingizga o'quvchi biriktira olasiz.")
+            raise PermissionDenied(_("Faqat o'z kursingizga o'quvchi biriktira olasiz."))
         if student_id:
             try:
                 return User.objects.get(pk=student_id, role=User.Role.STUDENT)
             except (User.DoesNotExist, ValueError):
-                raise NotFound("O'quvchi topilmadi.")
+                raise NotFound(_("O'quvchi topilmadi."))
         if not student_ref:
-            raise NotFound("O'quvchi login yoki taklif kodini kiriting.")
+            raise NotFound(_("O'quvchi login yoki taklif kodini kiriting."))
         return _resolve_student_ref(student_ref)
-    raise PermissionDenied("Faqat o'quvchi, ota-ona yoki kurs o'qituvchisi yoza oladi.")
+    raise PermissionDenied(_("Faqat o'quvchi, ota-ona yoki kurs o'qituvchisi yoza oladi."))
 
 
 @transaction.atomic
@@ -176,11 +177,11 @@ def respond_enrollment(*, teacher: User, enrollment_id, action: str, request=Non
     try:
         enrollment = Enrollment.objects.select_related('course').get(pk=enrollment_id)
     except (Enrollment.DoesNotExist, ValueError):
-        raise NotFound("So'rov topilmadi.")
+        raise NotFound(_("So'rov topilmadi."))
     if enrollment.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi so'rovga javob beradi.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi so'rovga javob beradi."))
     if action not in ('approve', 'decline'):
-        raise NotFound("Amal noto'g'ri: approve yoki decline.")
+        raise NotFound(_("Amal noto'g'ri: approve yoki decline."))
     enrollment.status = (
         Enrollment.Status.APPROVED if action == 'approve' else Enrollment.Status.DECLINED
     )
@@ -197,7 +198,7 @@ def unenroll(*, course_id, by_user: User, student_id=None, request=None) -> bool
     """Yozuvni bekor qilish — o'quvchi o'zini, ota-ona bolasini, o'qituvchi o'z kursidan chiqaradi."""
     course = _get_course(course_id)
     student = _resolve_enroll_target(course=course, by_user=by_user, student_id=student_id)
-    deleted, _ = Enrollment.objects.filter(course=course, student=student).delete()
+    deleted, _details = Enrollment.objects.filter(course=course, student=student).delete()
     if deleted:
         audit.record(
             action='course.unenroll', actor=by_user, target=course,
@@ -222,7 +223,7 @@ def delete_course(*, teacher: User, course: Course, request=None) -> None:
     sifatida saqlanadi — shu sabab Kurs/Dars o'zi faqat soft-delete qilinadi
     (Attendance/LessonRating shularga CASCADE FK bilan bog'langan)."""
     if course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs egasi guruhni o'chira oladi.")
+        raise PermissionDenied(_("Faqat kurs egasi guruhni o'chira oladi."))
 
     lessons = list(course.lessons.all())
     lesson_ids = [lesson.id for lesson in lessons]
@@ -289,7 +290,7 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
     """Darsni yakunlash — davomatlar yopiladi, doska PDF chatga tushadi,
     video yozuv to'xtatilib O'QITUVCHI BERGAN NOM bilan guruh chatga e'lon qilinadi."""
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat o'qituvchi darsni tugata oladi.")
+        raise PermissionDenied(_("Faqat o'qituvchi darsni tugata oladi."))
     lesson.status = Lesson.Status.FINISHED
     lesson.save(update_fields=['status'])
     lesson.attendances.filter(left_at__isnull=True).update(left_at=timezone.now())
@@ -315,7 +316,7 @@ def finish_lesson(*, teacher: User, lesson: Lesson, recording_title: str = '', r
     # muvaffaqiyatli tugaganda) yuboriladi.
     try:
         from .models import LessonRecording
-        recording, _ = LessonRecording.objects.get_or_create(lesson=lesson)
+        recording, _created = LessonRecording.objects.get_or_create(lesson=lesson)
         title = (recording_title or '').strip() or lesson.title
         recording.title = title[:200]
         recording.ended_at = timezone.now()
@@ -418,7 +419,7 @@ def _ensure_recording_finalized(lesson: Lesson) -> None:
 
 @transaction.atomic
 def mark_joined(*, lesson: Lesson, student: User) -> Attendance:
-    attendance, _ = Attendance.objects.get_or_create(lesson=lesson, student=student)
+    attendance, _created = Attendance.objects.get_or_create(lesson=lesson, student=student)
     if attendance.joined_at is None:
         attendance.joined_at = timezone.now()
         attendance.save(update_fields=['joined_at'])
@@ -483,10 +484,10 @@ def recording_info(*, user: User, lesson: Lesson) -> dict:
     from .models import LessonRecording
 
     if not _can_view_lesson(user, lesson):
-        raise PermissionDenied("Bu dars yozuvini ko'rish huquqingiz yo'q.")
+        raise PermissionDenied(_("Bu dars yozuvini ko'rish huquqingiz yo'q."))
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None:
-        raise NotFound("Bu darsda video yozuv yo'q.")
+        raise NotFound(_("Bu darsda video yozuv yo'q."))
 
     from datetime import timedelta
 
@@ -552,15 +553,15 @@ def recording_stream_path(*, lesson: Lesson, token: str):
     try:
         value = signing.TimestampSigner().unsign(token, max_age=RECORDING_STREAM_MAX_AGE)
     except signing.BadSignature:
-        raise PermissionDenied('Havola yaroqsiz yoki muddati tugagan.')
+        raise PermissionDenied(_('Havola yaroqsiz yoki muddati tugagan.'))
     if value != str(lesson.id):
-        raise PermissionDenied('Havola boshqa darsga tegishli.')
+        raise PermissionDenied(_('Havola boshqa darsga tegishli.'))
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None or not recording.file_name:
-        raise NotFound("Yozuv topilmadi.")
+        raise NotFound(_("Yozuv topilmadi."))
     path = _recording_path(recording)
     if not path.exists():
-        raise NotFound("Yozuv fayli hali tayyor emas.")
+        raise NotFound(_("Yozuv fayli hali tayyor emas."))
     return path
 
 
@@ -572,10 +573,10 @@ def delete_recording(*, teacher: User, lesson: Lesson) -> None:
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Yozuvni faqat kurs o'qituvchisi o'chira oladi.")
+        raise PermissionDenied(_("Yozuvni faqat kurs o'qituvchisi o'chira oladi."))
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None:
-        raise NotFound("Yozuv yo'q.")
+        raise NotFound(_("Yozuv yo'q."))
     for name in (recording.file_name, recording.video_file_name, recording.audio_file_name):
         if not name:
             continue
@@ -614,11 +615,13 @@ def upload_recording_audio_chunk(*, teacher: User, lesson: Lesson, chunk, starte
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi audio yuklashi mumkin.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi audio yuklashi mumkin."))
     if chunk.size > AUDIO_CHUNK_MAX_MB * 1024 * 1024:
-        raise ValidationError({'chunk': f"Bo'lak {AUDIO_CHUNK_MAX_MB} MB dan katta."})
+        raise ValidationError({
+            'chunk': _("Bo'lak %(max_mb)s MB dan katta.") % {'max_mb': AUDIO_CHUNK_MAX_MB},
+        })
 
-    recording, _ = LessonRecording.objects.get_or_create(lesson=lesson)
+    recording, _created = LessonRecording.objects.get_or_create(lesson=lesson)
     if not recording.audio_file_name:
         parsed = parse_datetime(started_at) if started_at else None
         if parsed and timezone.is_naive(parsed):
@@ -645,10 +648,10 @@ def finalize_recording_audio(*, teacher: User, lesson: Lesson) -> None:
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi audio yozuvni yakunlashi mumkin.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi audio yozuvni yakunlashi mumkin."))
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None or not recording.audio_file_name:
-        raise ValidationError('Bu darsga audio yuklanmagan.')
+        raise ValidationError(_('Bu darsga audio yuklanmagan.'))
     recording.audio_finalized_at = timezone.now()
     recording.save(update_fields=['audio_finalized_at', 'updated_at'])
     live_services.maybe_start_merge(lesson.id)
@@ -664,11 +667,13 @@ def upload_recording_video_chunk(*, teacher: User, lesson: Lesson, chunk, starte
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi video yuklashi mumkin.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi video yuklashi mumkin."))
     if chunk.size > VIDEO_CHUNK_MAX_MB * 1024 * 1024:
-        raise ValidationError({'chunk': f"Bo'lak {VIDEO_CHUNK_MAX_MB} MB dan katta."})
+        raise ValidationError({
+            'chunk': _("Bo'lak %(max_mb)s MB dan katta.") % {'max_mb': VIDEO_CHUNK_MAX_MB},
+        })
 
-    recording, _ = LessonRecording.objects.get_or_create(lesson=lesson)
+    recording, _created = LessonRecording.objects.get_or_create(lesson=lesson)
     if not recording.video_file_name:
         parsed = parse_datetime(started_at) if started_at else None
         if parsed and timezone.is_naive(parsed):
@@ -695,10 +700,10 @@ def finalize_recording_video(*, teacher: User, lesson: Lesson) -> None:
     from .models import LessonRecording
 
     if lesson.course.teacher_id != teacher.id:
-        raise PermissionDenied("Faqat kurs o'qituvchisi video yozuvni yakunlashi mumkin.")
+        raise PermissionDenied(_("Faqat kurs o'qituvchisi video yozuvni yakunlashi mumkin."))
     recording = LessonRecording.objects.filter(lesson=lesson).first()
     if recording is None or not recording.video_file_name:
-        raise ValidationError('Bu darsga video yuklanmagan.')
+        raise ValidationError(_('Bu darsga video yuklanmagan.'))
     recording.video_ready_at = timezone.now()
     recording.save(update_fields=['video_ready_at', 'updated_at'])
     live_services.maybe_start_merge(lesson.id)
@@ -720,6 +725,9 @@ def publish_recording_message(lesson: Lesson, title: str) -> None:
             f'🎥 "{title}" — dars video yozuvi tayyor!\n'
             f"Ko'rish (faqat platformada): /recordings/{lesson.id}"
         ),
+        kind=Message.Kind.SYSTEM,
+        system_key='recording_ready',
+        system_params={'lesson_title': title, 'lesson_id': str(lesson.id)},
     )
     room.save(update_fields=['updated_at'])
     # send_message bilan bir xil: WebSocket'ga darhol tarqatamiz, aks holda

@@ -6,6 +6,7 @@ Kutilmagan (500) xatolar log'ga to'liq yoziladi, mijozga ichki tafsilot chiqmayd
 """
 import logging
 
+from django.utils.translation import gettext_lazy as _
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -24,7 +25,7 @@ def _first_message(data) -> str:
                 return _first_message(data[key])
         for value in data.values():
             return _first_message(value)
-    return 'Xatolik yuz berdi.'
+    return _('Xatolik yuz berdi.')
 
 
 def custom_exception_handler(exc, context):
@@ -41,7 +42,7 @@ def custom_exception_handler(exc, context):
                 'success': False,
                 'error': {
                     'code': 'server_error',
-                    'message': "Ichki xatolik. Birozdan so'ng qayta urinib ko'ring.",
+                    'message': _("Ichki xatolik. Birozdan so'ng qayta urinib ko'ring."),
                     'details': None,
                 },
             },

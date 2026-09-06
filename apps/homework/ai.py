@@ -1,7 +1,9 @@
 """Gemini bilan uy vazifasini baholash — AI-home-checker (RJalol) porti.
 
 Farqlar (maktab platformasi uchun moslashuv):
-  - Rol universitet emas, MAKTAB o'qituvchisi; feedback matnlari O'ZBEK tilida.
+  - Rol universitet emas, MAKTAB o'qituvchisi; feedback matnlari o'quvchi
+    topshirgan paytdagi tilida (uz/ru/en — `Submission.feedback_language`,
+    2026-09-06'da qo'shildi; standart uz).
   - Fan kursning `subject` matnidan avtomatik aniqlanadi (detect_profile).
   - JSON sxema asl loyihadagi bilan bir xil qoldirilgan:
       {overall_score, grade, questions[], summary} — hisobotlar mos bo'ladi.
@@ -323,15 +325,42 @@ def detect_profile(subject_text: str) -> tuple:
 # ---------------------------------------------------------------------------
 # Prompt qurish — asl build_system_prompt'ning ixcham porti
 # ---------------------------------------------------------------------------
-_OUTPUT_FORMAT = """# OUTPUT FORMAT
+# 2026-09-06: grade yorlig'i va feedback tili endi qattiq UZBEK'ga
+# bog'lanmagan — o'quvchi topshirgan payt `Accept-Language`i (`Submission.
+# feedback_language`da saqlanadi) qaysi to'plamni ishlatishni belgilaydi.
+_GRADE_LABELS = {
+    'uz': {
+        90: "A'lo", 80: 'Juda yaxshi', 70: 'Yaxshi', 60: 'Qoniqarli',
+        50: 'Yaxshilash kerak', 0: 'Jiddiy yaxshilash kerak',
+    },
+    'ru': {
+        90: 'Отлично', 80: 'Очень хорошо', 70: 'Хорошо', 60: 'Удовлетворительно',
+        50: 'Требует улучшения', 0: 'Требует серьёзного улучшения',
+    },
+    'en': {
+        90: 'Excellent', 80: 'Very good', 70: 'Good', 60: 'Satisfactory',
+        50: 'Needs improvement', 0: 'Needs serious improvement',
+    },
+}
+_LANGUAGE_INSTRUCTION_NAMES = {
+    'uz': 'UZBEK (latin script)',
+    'ru': 'RUSSIAN (Cyrillic script)',
+    'en': 'ENGLISH',
+}
+
+
+def _output_format(feedback_language: str = 'uz') -> str:
+    labels = _GRADE_LABELS.get(feedback_language, _GRADE_LABELS['uz'])
+    language_name = _LANGUAGE_INSTRUCTION_NAMES.get(feedback_language, _LANGUAGE_INSTRUCTION_NAMES['uz'])
+    return f"""# OUTPUT FORMAT
 
 Return ONLY valid JSON with this exact shape (no markdown fences, no commentary):
 
-{
+{{
   "overall_score": 84,
-  "grade": "Juda yaxshi",
+  "grade": "{labels[80]}",
   "questions": [
-    {
+    {{
       "question_number": 1,
       "question": "...",
       "student_answer": "...",
@@ -343,27 +372,27 @@ Return ONLY valid JSON with this exact shape (no markdown fences, no commentary)
       "suggestions": ["..."],
       "difficulty": "Easy | Medium | Hard",
       "score": 85
-    }
+    }}
   ],
-  "summary": {
+  "summary": {{
     "strengths": ["..."],
     "weaknesses": ["..."],
     "topics_to_review": ["..."],
     "recommendations": ["..."]
-  }
-}
+  }}
+}}
 
-GRADING SCALE (for the "grade" field — use these exact Uzbek labels):
-90-100 -> A'lo
-80-89  -> Juda yaxshi
-70-79  -> Yaxshi
-60-69  -> Qoniqarli
-50-59  -> Yaxshilash kerak
-Below 50 -> Jiddiy yaxshilash kerak
+GRADING SCALE (for the "grade" field — use these exact labels):
+90-100 -> {labels[90]}
+80-89  -> {labels[80]}
+70-79  -> {labels[70]}
+60-69  -> {labels[60]}
+50-59  -> {labels[50]}
+Below 50 -> {labels[0]}
 
 LANGUAGE: write ALL human-readable text values (question, student_answer,
 expected_solution, analysis, mistakes, correct_answer, suggestions, and every
-summary item) in simple UZBEK (latin script) that a school student easily
+summary item) in simple {language_name} that a school student easily
 understands. Keep JSON keys, "difficulty" values, and "error_categories" in
 English exactly as listed.
 
@@ -381,7 +410,8 @@ _SCORING_DISCIPLINE = """# SCORING DISCIPLINE (STRICT)
 
 
 def build_system_prompt(subject_key: str, custom_name: str = '',
-                        language_key: str = '', skill_key: str = '') -> str:
+                        language_key: str = '', skill_key: str = '',
+                        feedback_language: str = 'uz') -> str:
     if language_key and skill_key and skill_key in SKILLS:
         language = LANGUAGES.get(language_key, language_key.title())
         skill = SKILLS[skill_key]
@@ -432,7 +462,7 @@ Never insult the student. Never write just "Wrong."
 # ERROR CATEGORIES
 Use one or more of: {', '.join(error_categories)}
 
-{_OUTPUT_FORMAT}"""
+{_output_format(feedback_language)}"""
 
 
 def build_user_prompt(extra_instructions: str = '') -> str:
@@ -530,6 +560,7 @@ def grade_file(
     skill_key: str = '',
     extra_instructions: str = '',
     max_retries: int = 2,
+    feedback_language: str = 'uz',
 ) -> dict:
     """Bitta topshiriq faylini Gemini bilan baholaydi, tekshirilgan JSON qaytaradi."""
     api_key = getattr(settings, 'GEMINI_API_KEY', '')
@@ -546,6 +577,7 @@ def grade_file(
         custom_name=custom_name,
         language_key=language_key,
         skill_key=skill_key if language_key else '',
+        feedback_language=feedback_language,
     )
 
     genai.configure(api_key=api_key)
