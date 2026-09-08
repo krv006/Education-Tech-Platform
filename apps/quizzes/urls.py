@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path('', views.QuizListCreateView.as_view(), name='quiz-list-create'),
+    path('import/', views.QuizImportView.as_view(), name='quiz-import'),
     path('<uuid:pk>/', views.QuizDetailView.as_view(), name='quiz-detail'),
     path('<uuid:pk>/attempts/', views.QuizAttemptListCreateView.as_view(), name='quiz-attempts'),
 ]

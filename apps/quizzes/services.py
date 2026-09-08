@@ -1,4 +1,6 @@
 """Quizzes service qatlami — barcha yozuvchi biznes-logika shu yerda."""
+from pathlib import Path
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -7,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.accounts.models import User
 from apps.lessons.models import Course, Enrollment, Lesson
 
+from . import docx_import
 from .models import AnswerResponse, Option, Question, Quiz, QuizAttempt
 
 _ENROLLED = Enrollment.Status.APPROVED
@@ -62,6 +65,29 @@ def create_quiz(
     if opens_at is None or opens_at <= timezone.now():
         transaction.on_commit(lambda: _notify_new_quiz(quiz))
     return quiz
+
+
+def import_quiz_docx(*, upload) -> dict:
+    """`.docx` faylni parse qilib preview qaytaradi — HECH NARSA DB'ga
+    yozilmaydi. O'qituvchi preview'ni ko'rib (kerak bo'lsa tahrirlab)
+    `create_quiz`'ga (yuqoridagi, mavjud endpoint) yuboradi."""
+    if upload is None:
+        raise ValidationError({'file': _('Fayl majburiy.')})
+    ext = Path(upload.name or '').suffix.lower()
+    if ext != '.docx':
+        raise ValidationError({'file': _("Faqat .docx fayl qo'llab-quvvatlanadi.")})
+    if upload.size > docx_import.MAX_IMPORT_FILE_SIZE_MB * 1024 * 1024:
+        raise ValidationError({'file': _('Fayl %(size).1f MB; chegara %(max_mb)s MB.') % {
+            'size': upload.size / 1024 / 1024, 'max_mb': docx_import.MAX_IMPORT_FILE_SIZE_MB,
+        }})
+
+    try:
+        result = docx_import.parse_docx_questions(upload)
+    except Exception as exc:
+        raise ValidationError({'file': _("Faylni o'qib bo'lmadi: %(error)s") % {'error': str(exc)}}) from exc
+    if not result['questions']:
+        raise ValidationError({'file': _('Fayldan birorta ham savol topilmadi.')})
+    return result
 
 
 def delete_quiz(*, teacher: User, quiz: Quiz) -> None:

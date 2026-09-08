@@ -17,6 +17,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from django.conf import settings
@@ -27,8 +28,17 @@ ALLOWED_EXTENSIONS = {
     '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.docx',
     '.mp3', '.wav', '.m4a', '.ogg',
 }
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp'}
 AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.ogg'}
 MAX_FILE_SIZE_MB = 25
+
+# Gemini rasmni 768x768 tile'larga bo'lib tokenlaydi — telefon kamerasidan
+# kelgan 3000-4000px rasm shu sababli foydasiz ko'p token sarflaydi. AI'ga
+# yuborishdan oldin uzun tomonini shu chegaragacha kichraytirib, JPEG'ga qayta
+# kodlaymiz (matn/qo'lyozma o'qilishi uchun yetarli sifatda); diskdagi asl
+# fayl (o'qituvchiga ko'rsatiladigan) o'zgarishsiz qoladi.
+MAX_IMAGE_DIMENSION = 1600
+IMAGE_JPEG_QUALITY = 85
 
 GENERATION_CONFIG = {
     'temperature': 0.1,  # past temperatura — barqaror, qat'iy baholash
@@ -537,6 +547,34 @@ _MIME_TYPES = {
 }
 
 
+def _prepare_image_bytes(path: Path) -> tuple:
+    """Rasmni Gemini'ga yuborishdan oldin kichraytirib JPEG'ga qayta kodlaydi.
+
+    `MAX_IMAGE_DIMENSION`/`IMAGE_JPEG_QUALITY` izohiga qarang — token tejash
+    uchun. EXIF orientatsiyasi to'g'rilanadi (aks holda telefon rasmi
+    Gemini'ga yon/teskari ko'rinishi mumkin).
+    """
+    from PIL import Image, ImageOps
+
+    with Image.open(path) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[-1])
+            img = background
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        if max(img.size) > MAX_IMAGE_DIMENSION:
+            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.LANCZOS)
+
+        buffer = BytesIO()
+        img.save(buffer, format='JPEG', quality=IMAGE_JPEG_QUALITY, optimize=True)
+        return buffer.getvalue(), 'image/jpeg'
+
+
 def _extract_docx_text(path: Path) -> str:
     import docx  # python-docx — lazy, faqat DOCX kelganda kerak
 
@@ -595,6 +633,12 @@ def grade_file(
             'The homework was submitted as a Word document. Extracted text:\n\n'
             + _extract_docx_text(path),
         ]
+    elif ext in IMAGE_EXTENSIONS:
+        try:
+            data, mime_type = _prepare_image_bytes(path)
+        except Exception as exc:
+            raise HomeworkAIError(f"'{path.name}' rasmni tayyorlab bo'lmadi: {exc}") from exc
+        content_parts = [user_prompt, {'mime_type': mime_type, 'data': data}]
     else:
         mime_type = _MIME_TYPES.get(ext)
         try:

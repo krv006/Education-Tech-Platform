@@ -1,9 +1,23 @@
+from io import BytesIO
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 from apps.accounts.tests import register, login
 
 from .models import Quiz
+
+
+def _build_docx(lines: list) -> bytes:
+    import docx
+
+    document = docx.Document()
+    for line in lines:
+        document.add_paragraph(line)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def _mcq(text, correct_index, options, points=1):
@@ -183,3 +197,98 @@ class QuizFlowTests(APITestCase):
         payload = {**self.quiz_payload, 'opens_at': (timezone.now() + timedelta(days=1)).isoformat()}
         self.client.post('/api/v1/quizzes/', payload, format='json')
         self.assertFalse(Notification.objects.filter(link_type='quiz').exists())
+
+
+class QuizDocxImportTests(APITestCase):
+    def setUp(self):
+        register(self.client, 't1', 'teacher')
+        self.teacher_token = login(self.client, 't1')
+        register(self.client, 's1', 'student')
+        self.student_token = login(self.client, 's1')
+
+    def auth(self, token):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def import_docx(self, lines):
+        self.auth(self.teacher_token)
+        content = _build_docx(lines)
+        upload = SimpleUploadedFile(
+            'test.docx', content,
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        return self.client.post('/api/v1/quizzes/import/', {'file': upload}, format='multipart')
+
+    def test_teacher_imports_well_formed_docx(self):
+        resp = self.import_docx([
+            'Nevrologiya fanidan test savollari',
+            'Bolalar serebral falaji mavzusi',
+            "1. Qaysi shaklda mushak tonusi oshadi?",
+            'A) Giperkinetik shakl',
+            'B) Spastik diplegiya',
+            'C) Miyachali shakl',
+            "To'g'ri javob: B",
+            '2. Ataksiya qaysi shaklga xos?',
+            'A) Miyachali shakl',
+            'B) Spastik shakl',
+            "To'g'ri javob: A",
+        ])
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['title'], 'Nevrologiya fanidan test savollari')
+        self.assertEqual(data['description'], 'Bolalar serebral falaji mavzusi')
+        self.assertEqual(len(data['questions']), 2)
+        self.assertEqual(data['warnings'], [])
+        q1_options = data['questions'][0]['options']
+        self.assertEqual(len(q1_options), 3)
+        self.assertEqual(sum(1 for o in q1_options if o['is_correct']), 1)
+        self.assertTrue(q1_options[1]['is_correct'])  # B = index 1
+
+    def test_import_flags_question_with_no_detected_answer(self):
+        resp = self.import_docx([
+            '1. Javobi yo\'q savol',
+            'A) Variant 1',
+            'B) Variant 2',
+        ])
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data['warnings']), 1)
+        self.assertEqual(data['warnings'][0]['reason'], 'answer_not_detected')
+        self.assertEqual(sum(1 for o in data['questions'][0]['options'] if o['is_correct']), 0)
+
+    def test_import_rejects_file_with_no_questions(self):
+        resp = self.import_docx(['Bu yerda birorta ham savol yo\'q'])
+        self.assertEqual(resp.status_code, 400)
+
+    def test_import_rejects_non_docx_extension(self):
+        self.auth(self.teacher_token)
+        upload = SimpleUploadedFile('test.txt', b'1. Savol?\nA) X\nB) Y\nJavob: A', content_type='text/plain')
+        resp = self.client.post('/api/v1/quizzes/import/', {'file': upload}, format='multipart')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_student_cannot_import(self):
+        self.auth(self.student_token)
+        content = _build_docx(['1. Savol?', 'A) X', 'B) Y', "To'g'ri javob: A"])
+        upload = SimpleUploadedFile('test.docx', content)
+        resp = self.client.post('/api/v1/quizzes/import/', {'file': upload}, format='multipart')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_imported_preview_can_be_submitted_as_real_quiz(self):
+        resp = self.import_docx([
+            '1. 2+2 nechchi?',
+            'A) 3',
+            'B) 4',
+            "To'g'ri javob: B",
+        ])
+        preview = resp.json()
+        self.auth(self.teacher_token)
+        course_id = self.client.post(
+            '/api/v1/courses/', {'title': 'Matematika', 'subject': 'Matematika'}
+        ).json()['id']
+        create_resp = self.client.post('/api/v1/quizzes/', {
+            'course': course_id,
+            'title': preview['title'] or 'Import qilingan test',
+            'description': preview['description'],
+            'questions': preview['questions'],
+        }, format='json')
+        self.assertEqual(create_resp.status_code, 201)
+        self.assertEqual(len(create_resp.json()['questions']), 1)

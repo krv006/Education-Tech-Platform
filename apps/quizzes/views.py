@@ -6,6 +6,7 @@ apps.core.permissions registry'sida.
 from django.utils.translation import gettext_lazy as _
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -58,6 +59,21 @@ class QuizListCreateView(generics.ListCreateAPIView):
             due_at=data.get('due_at'), opens_at=data.get('opens_at'), questions=data['questions'],
         )
         return Response(QuizDetailSerializer(quiz).data, status=status.HTTP_201_CREATED)
+
+
+class QuizImportView(APIView):
+    """`.docx` fayldan test savollarini parse qilib preview qaytaradi —
+    hech narsa saqlanmaydi. O'qituvchi ko'rib chiqib, `QuizListCreateView`
+    orqali (course/title bilan birga) haqiqiy testni yaratadi."""
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        return [RequirePerm('quiz.create')()]
+
+    def post(self, request):
+        result = services.import_quiz_docx(upload=request.FILES.get('file'))
+        return Response(result)
 
 
 class QuizDetailView(APIView):
