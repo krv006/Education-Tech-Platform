@@ -2,6 +2,7 @@ import secrets
 import string
 import uuid
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db.models import (
     CASCADE,
@@ -41,6 +42,11 @@ class User(AbstractUser):
     # Student's invite code — parent enters it to request a link (consent flow).
     invite_code = CharField(max_length=12, unique=True, null=True, blank=True)
     avatar = ImageField(upload_to='avatars/', null=True, blank=True)
+    # Frontend `PATCH /auth/me/` orqali yozadi — qurilma/brauzerdan mustaqil,
+    # foydalanuvchi qayerdan kirsa ham tanlagan tili saqlanib qoladi. Har bir
+    # so'rovdagi `Accept-Language` esa mustaqil ishlayveradi (LocaleMiddleware);
+    # bu maydon faqat "eslab qolingan tanlov" — ikkalasi bir-biriga bog'liq emas.
+    preferred_language = CharField(max_length=8, choices=settings.LANGUAGES, default='uz', blank=True)
     created_at = DateTimeField(auto_now_add=True)
     updated_at = DateTimeField(auto_now=True)
 

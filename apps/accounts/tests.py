@@ -75,6 +75,37 @@ class AuthTests(APITestCase):
         self.assertTrue(resp.json()['avatar'])
         self.assertIn('/media/avatars/', resp.json()['avatar'])
 
+    def test_preferred_language_defaults_to_uz_and_is_updatable(self):
+        register(self.client, 'lang1', 'student')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "lang1")}')
+
+        self.assertEqual(self.client.get('/api/v1/auth/me/').json()['preferred_language'], 'uz')
+
+        resp = self.client.patch('/api/v1/auth/me/', {'preferred_language': 'ru'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['preferred_language'], 'ru')
+        # Boshqa "qurilma"dan (yangi so'rov) ham saqlangan qiymat qaytishi kerak.
+        self.assertEqual(self.client.get('/api/v1/auth/me/').json()['preferred_language'], 'ru')
+
+    def test_preferred_language_rejects_unsupported_code(self):
+        register(self.client, 'lang2', 'student')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "lang2")}')
+
+        resp = self.client.patch('/api/v1/auth/me/', {'preferred_language': 'fr'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_role_and_invite_code_stay_read_only_when_updating_language(self):
+        register(self.client, 'lang3', 'student')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login(self.client, "lang3")}')
+        original_invite_code = self.client.get('/api/v1/auth/me/').json()['invite_code']
+
+        resp = self.client.patch('/api/v1/auth/me/', {
+            'preferred_language': 'en', 'role': 'admin', 'invite_code': 'HACKED',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['role'], 'student')
+        self.assertEqual(resp.json()['invite_code'], original_invite_code)
+
 
 class CertificateTests(APITestCase):
     def upload(self, filename='cert.png'):
