@@ -9,8 +9,13 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.accounts.models import User
 from apps.lessons.models import Course, Enrollment, Lesson
 
-from . import docx_import
+from . import docx_import, template_export, xlsx_import
 from .models import AnswerResponse, Option, Question, Quiz, QuizAttempt
+
+_IMPORT_PARSERS = {
+    '.docx': docx_import.parse_docx_questions,
+    '.xlsx': xlsx_import.parse_xlsx_questions,
+}
 
 _ENROLLED = Enrollment.Status.APPROVED
 
@@ -67,27 +72,39 @@ def create_quiz(
     return quiz
 
 
-def import_quiz_docx(*, upload) -> dict:
-    """`.docx` faylni parse qilib preview qaytaradi — HECH NARSA DB'ga
-    yozilmaydi. O'qituvchi preview'ni ko'rib (kerak bo'lsa tahrirlab)
+def import_quiz_file(*, upload) -> dict:
+    """`.docx` yoki `.xlsx` faylni parse qilib preview qaytaradi — HECH NARSA
+    DB'ga yozilmaydi. O'qituvchi preview'ni ko'rib (kerak bo'lsa tahrirlab)
     `create_quiz`'ga (yuqoridagi, mavjud endpoint) yuboradi."""
     if upload is None:
         raise ValidationError({'file': _('Fayl majburiy.')})
     ext = Path(upload.name or '').suffix.lower()
-    if ext != '.docx':
-        raise ValidationError({'file': _("Faqat .docx fayl qo'llab-quvvatlanadi.")})
+    parser = _IMPORT_PARSERS.get(ext)
+    if parser is None:
+        raise ValidationError({'file': _("Faqat .docx yoki .xlsx fayl qo'llab-quvvatlanadi.")})
     if upload.size > docx_import.MAX_IMPORT_FILE_SIZE_MB * 1024 * 1024:
         raise ValidationError({'file': _('Fayl %(size).1f MB; chegara %(max_mb)s MB.') % {
             'size': upload.size / 1024 / 1024, 'max_mb': docx_import.MAX_IMPORT_FILE_SIZE_MB,
         }})
 
     try:
-        result = docx_import.parse_docx_questions(upload)
+        result = parser(upload)
     except Exception as exc:
         raise ValidationError({'file': _("Faylni o'qib bo'lmadi: %(error)s") % {'error': str(exc)}}) from exc
     if not result['questions']:
         raise ValidationError({'file': _('Fayldan birorta ham savol topilmadi.')})
     return result
+
+
+def build_quiz_template(*, fmt: str, count) -> bytes:
+    """Bo'sh shablon fayl (.docx / .xlsx) — `count` ta bo'sh savol bloki bilan,
+    import parserlariga mos formatda (`template_export.py`)."""
+    clamped = template_export.clamp_count(count)
+    if fmt == 'docx':
+        return template_export.build_docx_template(clamped)
+    if fmt == 'xlsx':
+        return template_export.build_xlsx_template(clamped)
+    raise ValidationError({'format': _("Format faqat 'docx' yoki 'xlsx' bo'lishi mumkin.")})
 
 
 def delete_quiz(*, teacher: User, quiz: Quiz) -> None:

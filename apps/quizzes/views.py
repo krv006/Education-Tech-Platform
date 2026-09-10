@@ -3,6 +3,7 @@
 Biznes-logika services.py da, ko'rish huquqi selectors.py da, ruxsatlar
 apps.core.permissions registry'sida.
 """
+from django.http import HttpResponse
 from django.utils.translation import gettext_lazy as _
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
@@ -62,9 +63,10 @@ class QuizListCreateView(generics.ListCreateAPIView):
 
 
 class QuizImportView(APIView):
-    """`.docx` fayldan test savollarini parse qilib preview qaytaradi —
-    hech narsa saqlanmaydi. O'qituvchi ko'rib chiqib, `QuizListCreateView`
-    orqali (course/title bilan birga) haqiqiy testni yaratadi."""
+    """`.docx` yoki `.xlsx` fayldan test savollarini parse qilib preview
+    qaytaradi — hech narsa saqlanmaydi. O'qituvchi ko'rib chiqib,
+    `QuizListCreateView` orqali (course/title bilan birga) haqiqiy testni
+    yaratadi."""
 
     parser_classes = [MultiPartParser, FormParser]
 
@@ -72,8 +74,37 @@ class QuizImportView(APIView):
         return [RequirePerm('quiz.create')()]
 
     def post(self, request):
-        result = services.import_quiz_docx(upload=request.FILES.get('file'))
+        result = services.import_quiz_file(upload=request.FILES.get('file'))
         return Response(result)
+
+
+_TEMPLATE_CONTENT_TYPES = {
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+}
+
+
+class QuizTemplateView(APIView):
+    """Bo'sh shablon faylni yuklab olish — `?type=docx|xlsx&count=10`.
+
+    E'TIBOR: query parametr ataylab `type` (`format` EMAS) — DRF'ning o'zi
+    `format` nomli query parametrni content-negotiation uchun band qilib
+    qo'ygan (mos renderer topilmasa, 404 qaytaradi — `format=docx` ishlatilsa
+    shu tuzoqqa tushib qolamiz).
+
+    Qaytgan fayl `QuizImportView` orqali to'ldirib qaytadan import qilinishi
+    uchun mo'ljallangan (`apps.quizzes.template_export`)."""
+
+    def get_permissions(self):
+        return [RequirePerm('quiz.create')()]
+
+    def get(self, request):
+        fmt = (request.query_params.get('type') or 'docx').lower()
+        content = services.build_quiz_template(fmt=fmt, count=request.query_params.get('count'))
+        content_type = _TEMPLATE_CONTENT_TYPES.get(fmt, 'application/octet-stream')
+        response = HttpResponse(content, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="test_shabloni.{fmt}"'
+        return response
 
 
 class QuizDetailView(APIView):
