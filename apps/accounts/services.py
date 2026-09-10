@@ -193,6 +193,28 @@ def delete_certificate(*, teacher: User, certificate_id) -> None:
     certificate.delete()
 
 
+def switch_account(*, current_user: User, target_id, request=None) -> User:
+    """Xuddi shu telefon raqamidagi boshqa rol-akkauntga (masalan
+    o'qituvchi -> ota-ona) parolsiz o'tish — joriy sessiya autentifikatsiyasi
+    yetarli, chunki ikkala akkaunt bir xil telefon raqami bilan ro'yxatdan
+    o'tgan (`selectors.linked_accounts`). Login jurnaliga ham yoziladi —
+    shundan keyingi "yangi qurilma/IP" solishtiruvlari to'g'ri ishlashi uchun."""
+    from . import selectors
+
+    if not selectors.linked_accounts(current_user).filter(pk=target_id).exists():
+        raise PermissionDenied(_("Bu akkaunt sizga bog'lanmagan."))
+    try:
+        target = User.objects.get(pk=target_id, is_active=True)
+    except (User.DoesNotExist, ValueError, TypeError):
+        raise NotFound(_('Akkaunt topilmadi.'))
+    audit.record(
+        action='auth.switch', actor=current_user, target=target,
+        meta={'from_user_id': str(current_user.pk)}, request=request,
+    )
+    record_login(user=target, request=request)
+    return target
+
+
 def logout(*, user: User, refresh_token: str | None = None, request=None) -> None:
     """Chiqish — berilgan refresh token bekor qilinadi (blacklist), qayta
     ishlatib bo'lmaydi. Access token o'z muddati tugaguncha amal qiladi

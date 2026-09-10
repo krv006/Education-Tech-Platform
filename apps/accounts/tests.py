@@ -45,6 +45,19 @@ class AuthTests(APITestCase):
         # ota-ona keyin bog'lanishi uchun invite_code hali ham beriladi
         self.assertTrue(me.json()['invite_code'])
 
+    def test_register_returns_tokens_for_immediate_auto_login(self):
+        """Ro'yxatdan o'tish javobida access/refresh bo'lishi kerak — alohida
+        `/login/` chaqirmasdan darhol autentifikatsiyalash mumkin bo'lishi uchun."""
+        resp = register(self.client, 'autologin1', 'teacher')
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertIn('access', body)
+        self.assertIn('refresh', body)
+
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f"Bearer {body['access']}")
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()['username'], 'autologin1')
+
     def test_unknown_role_cannot_register_publicly(self):
         resp = register(self.client, 'weird1', 'admin')
         self.assertEqual(resp.status_code, 400)
@@ -430,3 +443,87 @@ class LinkedAccountsTests(APITestCase):
         other = User.objects.get(username='leak_parent')
 
         self.assertNotIn('linked_accounts', UserSerializer(other).data)
+
+
+class SwitchAccountTests(APITestCase):
+    """Bir xil telefon raqamidagi rol-akkauntlar orasida parolsiz o'tish
+    (`POST /auth/switch/<id>/`) — token joriy sessiyadan olinadi, parol
+    qayta so'ralmaydi."""
+
+    PHONE = '+998901234567'
+
+    def test_switch_to_linked_account_succeeds(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        register(self.client, 'sw_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'sw_parent', 'parent', phone=self.PHONE)
+        access = login(self.client, 'sw_teacher')
+        parent = User.objects.get(username='sw_parent')
+
+        resp = self.client.post(
+            f'/api/v1/auth/switch/{parent.pk}/', HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertIn('access', body)
+        self.assertIn('refresh', body)
+        self.assertEqual(body['user']['username'], 'sw_parent')
+        self.assertEqual(str(AccessToken(body['access'])['user_id']), str(parent.pk))
+
+    def test_switch_new_access_token_authenticates_as_target(self):
+        register(self.client, 'sw2_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'sw2_parent', 'parent', phone=self.PHONE)
+        access = login(self.client, 'sw2_teacher')
+        parent = User.objects.get(username='sw2_parent')
+
+        switch = self.client.post(
+            f'/api/v1/auth/switch/{parent.pk}/', HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+        new_access = switch.json()['access']
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {new_access}')
+        self.assertEqual(me.json()['username'], 'sw2_parent')
+
+    def test_switch_to_unlinked_account_rejected(self):
+        register(self.client, 'sw_a', 'teacher', phone='+998900000001')
+        register(self.client, 'sw_b', 'teacher', phone='+998900000002')
+        access = login(self.client, 'sw_a')
+        other = User.objects.get(username='sw_b')
+
+        resp = self.client.post(
+            f'/api/v1/auth/switch/{other.pk}/', HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_switch_to_nonexistent_account_rejected(self):
+        """Mavjud bo'lmagan id ham "bog'lanmagan" sifatida rad etiladi (403) —
+        404 bilan farqlash orqali akkaunt mavjudligini oshkor qilmaslik uchun."""
+        import uuid
+
+        register(self.client, 'sw_lone', 'teacher', phone=self.PHONE)
+        access = login(self.client, 'sw_lone')
+
+        resp = self.client.post(
+            f'/api/v1/auth/switch/{uuid.uuid4()}/', HTTP_AUTHORIZATION=f'Bearer {access}',
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_switch_requires_auth(self):
+        register(self.client, 'sw_noauth', 'teacher', phone=self.PHONE)
+        target = User.objects.get(username='sw_noauth')
+        resp = self.client.post(f'/api/v1/auth/switch/{target.pk}/')
+        self.assertEqual(resp.status_code, 401)
+
+    def test_switch_is_recorded_in_target_login_history(self):
+        register(self.client, 'sw_hist_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'sw_hist_parent', 'parent', phone=self.PHONE)
+        access = login(self.client, 'sw_hist_teacher')
+        parent = User.objects.get(username='sw_hist_parent')
+
+        self.client.post(f'/api/v1/auth/switch/{parent.pk}/', HTTP_AUTHORIZATION=f'Bearer {access}')
+
+        parent_access = login(self.client, 'sw_hist_parent')
+        history = self.client.get(
+            '/api/v1/auth/logins/', HTTP_AUTHORIZATION=f'Bearer {parent_access}',
+        )
+        self.assertEqual(history.status_code, 200)
+        self.assertGreaterEqual(len(history.json()), 1)

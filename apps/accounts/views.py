@@ -7,6 +7,7 @@ from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.core.permissions import RequirePerm
@@ -26,6 +27,11 @@ from .serializers import (
 
 
 class RegisterView(APIView):
+    """Ochiq ro'yxatdan o'tish — muvaffaqiyatli bo'lsa darhol token ham
+    qaytadi (auto-login): parol shu so'rovning o'zida tasdiqlangan, alohida
+    `/login/` chaqirish shart emas — bir xil telefon raqami bilan ikkinchi
+    rol-akkaunt ochayotganda ham qurilma darhol "eslab qoladi"."""
+
     permission_classes = [AllowAny]
     throttle_scope = 'auth'
 
@@ -33,7 +39,13 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = services.register_user(request=request, **serializer.validated_data)
-        return Response(RegisterSerializer(user).data, status=status.HTTP_201_CREATED)
+        refresh = RefreshToken.for_user(user)
+        services.record_login(user=user, request=request)
+        return Response({
+            **RegisterSerializer(user).data,
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        }, status=status.HTTP_201_CREATED)
 
 
 class LoginView(TokenObtainPairView):
@@ -96,6 +108,24 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class SwitchAccountView(APIView):
+    """Bir xil telefon raqamidagi boshqa rol-akkauntga parolsiz o'tish
+    (`linked_accounts` — /auth/me/ javobida ko'rinadi). Joriy access token
+    yetarli; yangi juft token (access+refresh) maqsad akkaunt uchun qaytadi."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request, pk):
+        target = services.switch_account(current_user=request.user, target_id=pk, request=request)
+        refresh = RefreshToken.for_user(target)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': MeSerializer(target).data,
+        })
 
 
 class ChildCreateView(APIView):

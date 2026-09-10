@@ -9,6 +9,7 @@ urlpatterns = [
     path('logins/', views.LoginHistoryView.as_view(), name='login-history'),
     path('token/refresh/', views.RefreshView.as_view(), name='token-refresh'),
     path('me/', views.MeView.as_view(), name='me'),
+    path('switch/<uuid:pk>/', views.SwitchAccountView.as_view(), name='switch-account'),
     path('me/certificates/', views.CertificateListCreateView.as_view(), name='certificate-list-create'),
     path('me/certificates/<uuid:pk>/', views.CertificateDeleteView.as_view(), name='certificate-delete'),
     path('users/search/', views.UserSearchView.as_view(), name='user-search'),
