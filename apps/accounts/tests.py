@@ -380,3 +380,53 @@ class MultiDeviceLoginTests(APITestCase):
     def test_logout_requires_auth(self):
         resp = self.client.post('/api/v1/auth/logout/', {})
         self.assertEqual(resp.status_code, 401)
+
+
+class LinkedAccountsTests(APITestCase):
+    """Bitta real inson bir xil telefon raqami bilan bir nechta rol-akkaunt
+    (o'qituvchi/ota-ona/o'quvchi) ocha oladi — `phone` endi UNIQUE emas."""
+
+    PHONE = '+998901234567'
+
+    def test_same_phone_can_register_multiple_roles(self):
+        r1 = register(self.client, 'multi_teacher', 'teacher', phone=self.PHONE)
+        self.assertEqual(r1.status_code, 201)
+        r2 = register(self.client, 'multi_parent', 'parent', phone=self.PHONE)
+        self.assertEqual(r2.status_code, 201)
+
+    def test_me_lists_linked_accounts_by_phone(self):
+        register(self.client, 'lt_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'lt_parent', 'parent', phone=self.PHONE)
+        access = login(self.client, 'lt_teacher')
+
+        resp = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {access}')
+        self.assertEqual(resp.status_code, 200)
+        linked = resp.json()['linked_accounts']
+        self.assertEqual(len(linked), 1)
+        self.assertEqual(linked[0]['username'], 'lt_parent')
+        self.assertEqual(linked[0]['role'], 'parent')
+
+    def test_no_phone_means_no_linked_accounts(self):
+        register(self.client, 'np_user', 'teacher')  # phone berilmagan
+        access = login(self.client, 'np_user')
+        resp = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {access}')
+        self.assertEqual(resp.json()['linked_accounts'], [])
+
+    def test_different_phone_not_linked(self):
+        register(self.client, 'dp_a', 'teacher', phone='+998900000001')
+        register(self.client, 'dp_b', 'teacher', phone='+998900000002')
+        access = login(self.client, 'dp_a')
+        resp = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {access}')
+        self.assertEqual(resp.json()['linked_accounts'], [])
+
+    def test_linked_accounts_not_leaked_via_general_user_serializer(self):
+        """Umumiy UserSerializer (boshqa foydalanuvchini ko'rsatishda ishlatiladigan
+        joylarda — kurs/dars/chat va h.k.) linked_accounts maydonini chiqarmasligi
+        kerak — bu faqat MeSerializer'da (/auth/me/) bor."""
+        from .serializers import UserSerializer
+
+        register(self.client, 'leak_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'leak_parent', 'parent', phone=self.PHONE)
+        other = User.objects.get(username='leak_parent')
+
+        self.assertNotIn('linked_accounts', UserSerializer(other).data)

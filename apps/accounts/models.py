@@ -38,7 +38,12 @@ class User(AbstractUser):
     # O'qituvchi ro'yxatdan o'tganda False — admin tasdiqlaguncha kursi/darsi ochilmaydi
     # (RequirePerm shu bayroqni tekshiradi, apps.core.permissions.user_has_perm).
     is_approved = BooleanField(default=True)
-    phone = CharField(max_length=20, unique=True, null=True, blank=True)
+    # Ataylab UNIQUE EMAS — bitta real inson bir xil raqam bilan bir nechta
+    # rol-akkaunt ochishi mumkin (o'qituvchi + ota-ona + o'quvchi), har biri
+    # o'z login/parolisi bilan. Shu raqamni ishlatgan boshqa akkauntlar
+    # `apps.accounts.selectors.linked_accounts()` orqali topiladi (profil —
+    # o'ziniki — va admin panelida ko'rinadi).
+    phone = CharField(max_length=20, null=True, blank=True, db_index=True)
     # Student's invite code — parent enters it to request a link (consent flow).
     invite_code = CharField(max_length=12, unique=True, null=True, blank=True)
     avatar = ImageField(upload_to='avatars/', null=True, blank=True)

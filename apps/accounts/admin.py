@@ -1,16 +1,34 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
+from . import selectors
 from .models import Consent, ParentChildLink, TeacherCertificate, User
 
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['username', 'first_name', 'last_name', 'role', 'phone', 'invite_code', 'is_active']
+    list_display = [
+        'username', 'first_name', 'last_name', 'role', 'phone',
+        'linked_accounts_count', 'invite_code', 'is_active',
+    ]
     list_filter = ['role', 'is_active']
+    readonly_fields = ['linked_accounts_display']
     fieldsets = UserAdmin.fieldsets + (
-        ('EdTech', {'fields': ('role', 'phone', 'invite_code')}),
+        ('EdTech', {'fields': ('role', 'phone', 'invite_code', 'linked_accounts_display')}),
     )
+
+    @admin.display(description='Shu raqamdagi boshqa akkauntlar')
+    def linked_accounts_count(self, obj):
+        return selectors.linked_accounts(obj).count() or ''
+
+    @admin.display(description='Shu telefon raqamidagi boshqa akkauntlar')
+    def linked_accounts_display(self, obj):
+        if obj.pk is None:
+            return '—'
+        accounts = selectors.linked_accounts(obj)
+        if not accounts:
+            return "Yo'q"
+        return ', '.join(f'{u.username} ({u.get_role_display()})' for u in accounts)
 
 
 @admin.register(ParentChildLink)

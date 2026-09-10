@@ -210,6 +210,19 @@ class CourseLessonFlowTests(APITestCase):
         }, format='json')
         self.assertEqual(resp.status_code, 400)
 
+    @staticmethod
+    def _next_monday() -> str:
+        """Har doim "bugun"dan keyingi eng yaqin dushanba, kamida 1 kun oldinda
+        (bugun dushanba bo'lsa — bir hafta keyingisi) — qattiq yozilgan sana
+        (masalan '2026-09-07') vaqt o'tishi bilan o'tmishga aylanib, testni
+        o'zi buzib qo'yishining oldini oladi. Dushanbaga tekislash muhim:
+        days=[0,2,4] hammasi shu haftaning ICHIDA hisoblanishi uchun
+        (aks holda start_date hafta o'rtasiga to'g'ri kelsa, o'sha haftaning
+        boshidagi kunlar "o'tmishda" deb chetlab o'tiladi va son kamayadi)."""
+        today = timezone.now().date()
+        days_ahead = (7 - today.weekday()) % 7 or 7
+        return (today + timedelta(days=days_ahead)).isoformat()
+
     def test_schedule_recurring_creates_lessons(self):
         self.auth(self.teacher_token)
         resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
@@ -218,20 +231,21 @@ class CourseLessonFlowTests(APITestCase):
             'start_time': '10:00',
             'end_time': '11:00',
             'weeks': 2,
-            'start_date': '2026-09-07',
+            'start_date': self._next_monday(),
         }, format='json')
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.json()['count'], 6)
 
     def test_schedule_recurring_detects_overlap(self):
         self.auth(self.teacher_token)
+        start_date = self._next_monday()
         self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
             'title': 'Dars A',
             'days': [0],
             'start_time': '14:00',
             'end_time': '15:00',
             'weeks': 1,
-            'start_date': '2026-09-07',
+            'start_date': start_date,
         }, format='json')
         resp = self.client.post(f'/api/v1/courses/{self.course_id}/schedule/', {
             'title': 'Dars B',
@@ -239,7 +253,7 @@ class CourseLessonFlowTests(APITestCase):
             'start_time': '14:30',
             'end_time': '15:30',
             'weeks': 1,
-            'start_date': '2026-09-07',
+            'start_date': start_date,
         }, format='json')
         self.assertEqual(resp.status_code, 400)
 

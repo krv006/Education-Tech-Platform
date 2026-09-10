@@ -61,3 +61,13 @@ def teacher_list() -> QuerySet[User]:
 def pending_teachers() -> QuerySet[User]:
     """Admin tasdig'ini kutayotgan (hali tasdiqlanmagan) o'qituvchilar."""
     return User.objects.filter(role=User.Role.TEACHER, is_approved=False).order_by('-created_at')
+
+
+def linked_accounts(user: User) -> QuerySet[User]:
+    """Xuddi shu telefon raqami bilan ro'yxatdan o'tgan BOSHQA akkauntlar
+    (bitta real inson — o'qituvchi + ota-ona + o'quvchi kabi bir necha
+    rol-akkaunt ochgan bo'lishi mumkin, `phone` UNIQUE emas — apps.accounts.models).
+    `phone` bo'sh bo'lsa — bo'sh natija (bo'sh qiymat bo'yicha "bog'lash" mantiqsiz)."""
+    if not user.phone:
+        return User.objects.none()
+    return User.objects.filter(phone=user.phone).exclude(pk=user.pk).order_by('role', 'username')

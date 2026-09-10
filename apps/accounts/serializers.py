@@ -53,6 +53,29 @@ class UserSerializer(serializers.ModelSerializer):
         return self._rating_stats(obj)['rating_count']
 
 
+class LinkedAccountSerializer(serializers.ModelSerializer):
+    """Xuddi shu telefon raqamidagi BOSHQA akkaunt — qisqa ko'rinish (to'liq
+    UserSerializer emas — reyting/sertifikat kabi og'ir maydonlar shart emas)."""
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'role']
+
+
+class MeSerializer(UserSerializer):
+    """`/auth/me/` uchun — UserSerializer + `linked_accounts` (faqat o'zining
+    profilida ko'rinadi, boshqa joyda UserSerializer ishlatilganda yo'q —
+    boshqa foydalanuvchining telefon-egalari ro'yxati oshkor bo'lmasligi uchun)."""
+
+    linked_accounts = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ['linked_accounts']
+
+    def get_linked_accounts(self, obj):
+        return LinkedAccountSerializer(selectors.linked_accounts(obj), many=True).data
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     """Ochiq ro'yxatdan o'tish — o'qituvchi, ota-ona yoki o'quvchi.
 

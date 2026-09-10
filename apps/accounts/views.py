@@ -19,6 +19,7 @@ from .serializers import (
     LinkRequestSerializer,
     LinkRespondSerializer,
     LinkSerializer,
+    MeSerializer,
     RegisterSerializer,
     UserSerializer,
 )
@@ -87,8 +88,11 @@ class LogoutView(APIView):
 
 
 class MeView(generics.RetrieveUpdateAPIView):
+    """O'z profilim — javobda `linked_accounts` ham bor (xuddi shu telefon
+    raqamidagi boshqa rol-akkauntlar, agar bo'lsa)."""
+
     permission_classes = [IsAuthenticated]
-    serializer_class = UserSerializer
+    serializer_class = MeSerializer
 
     def get_object(self):
         return self.request.user
