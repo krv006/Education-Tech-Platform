@@ -527,3 +527,111 @@ class SwitchAccountTests(APITestCase):
         )
         self.assertEqual(history.status_code, 200)
         self.assertGreaterEqual(len(history.json()), 1)
+
+
+class SwitchRoleTests(APITestCase):
+    """Ro'yxatdan o'tishsiz rolga o'tish (`POST /auth/switch-role/`) — agar
+    shu telefon raqamida o'sha rol hali mavjud bo'lmasa, avtomatik yaratiladi."""
+
+    PHONE = '+998907654321'
+
+    def auth(self, token):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def switch_role(self, role):
+        return self.client.post('/api/v1/auth/switch-role/', {'role': role}, format='json')
+
+    def test_teacher_auto_provisions_missing_parent_role(self):
+        register(self.client, 'srt_teacher', 'teacher', phone=self.PHONE)
+        self.auth(login(self.client, 'srt_teacher'))
+        self.assertFalse(User.objects.filter(phone=self.PHONE, role='parent').exists())
+
+        resp = self.switch_role('parent')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body['user']['role'], 'parent')
+        self.assertEqual(body['user']['phone'], self.PHONE)
+        self.assertTrue(User.objects.filter(phone=self.PHONE, role='parent').exists())
+
+    def test_auto_provisioned_teacher_needs_approval(self):
+        register(self.client, 'srp_parent', 'parent', phone=self.PHONE)
+        self.auth(login(self.client, 'srp_parent'))
+
+        resp = self.switch_role('teacher')
+        self.assertEqual(resp.status_code, 200)
+        new_teacher = User.objects.get(phone=self.PHONE, role='teacher')
+        self.assertFalse(new_teacher.is_approved)
+
+    def test_switching_to_existing_role_reuses_same_account(self):
+        register(self.client, 'sre_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'sre_parent', 'parent', phone=self.PHONE)
+        existing_parent_id = User.objects.get(username='sre_parent').pk
+        self.auth(login(self.client, 'sre_teacher'))
+
+        resp = self.switch_role('parent')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['user']['id'], str(existing_parent_id))
+        self.assertEqual(User.objects.filter(phone=self.PHONE, role='parent').count(), 1)
+
+    def test_student_cannot_switch_role_at_all(self):
+        register(self.client, 'srs_student', 'student', phone=self.PHONE)
+        self.auth(login(self.client, 'srs_student'))
+
+        resp = self.switch_role('teacher')
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(User.objects.filter(phone=self.PHONE, role='teacher').exists())
+
+    def test_student_cannot_switch_even_if_role_already_exists(self):
+        register(self.client, 'sre2_teacher', 'teacher', phone=self.PHONE)
+        register(self.client, 'sre2_student', 'student', phone=self.PHONE)
+        self.auth(login(self.client, 'sre2_student'))
+
+        resp = self.switch_role('teacher')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cannot_switch_to_own_current_role(self):
+        register(self.client, 'srown_teacher', 'teacher', phone=self.PHONE)
+        self.auth(login(self.client, 'srown_teacher'))
+
+        resp = self.switch_role('teacher')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rejects_invalid_role(self):
+        register(self.client, 'srbad_teacher', 'teacher', phone=self.PHONE)
+        self.auth(login(self.client, 'srbad_teacher'))
+
+        resp = self.switch_role('super_admin')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_requires_phone_number(self):
+        register(self.client, 'srnophone_teacher', 'teacher')  # phone berilmagan
+        self.auth(login(self.client, 'srnophone_teacher'))
+
+        resp = self.switch_role('parent')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_requires_auth(self):
+        resp = self.client.post('/api/v1/auth/switch-role/', {'role': 'parent'}, format='json')
+        self.assertEqual(resp.status_code, 401)
+
+    def test_generated_username_is_unique_on_collision(self):
+        register(self.client, 'srcol_teacher', 'teacher', phone=self.PHONE)
+        # Avtomatik generatsiya qilinadigan nomni oldindan band qilib qo'yamiz.
+        register(self.client, 'srcol_teacher_parent', 'parent', phone='+998900000009')
+        self.auth(login(self.client, 'srcol_teacher'))
+
+        resp = self.switch_role('parent')
+        self.assertEqual(resp.status_code, 200)
+        new_username = resp.json()['user']['username']
+        self.assertNotEqual(new_username, 'srcol_teacher_parent')
+        self.assertTrue(User.objects.filter(username=new_username, phone=self.PHONE).exists())
+
+    def test_new_role_can_immediately_authenticate_with_returned_token(self):
+        register(self.client, 'srauth_teacher', 'teacher', phone=self.PHONE)
+        self.auth(login(self.client, 'srauth_teacher'))
+
+        resp = self.switch_role('student')
+        new_access = resp.json()['access']
+        me = self.client.get('/api/v1/auth/me/', HTTP_AUTHORIZATION=f'Bearer {new_access}')
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()['role'], 'student')

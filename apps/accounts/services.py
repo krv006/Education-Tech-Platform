@@ -3,6 +3,8 @@
 Qoida: view'lar faqat HTTP bilan ishlaydi (parse/serialize), qaror va yozuv —
 service'da. Har bir muhim harakat audit'ga tushadi.
 """
+import secrets
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -210,6 +212,72 @@ def switch_account(*, current_user: User, target_id, request=None) -> User:
     audit.record(
         action='auth.switch', actor=current_user, target=target,
         meta={'from_user_id': str(current_user.pk)}, request=request,
+    )
+    record_login(user=target, request=request)
+    return target
+
+
+_SELF_SERVICE_ROLES = (User.Role.TEACHER, User.Role.PARENT, User.Role.STUDENT)
+
+
+def _generate_unique_username(base: str) -> str:
+    base = (base or 'user')[:140]
+    candidate = base
+    suffix = 1
+    while User.objects.filter(username=candidate).exists():
+        suffix += 1
+        candidate = f'{base}{suffix}'
+    return candidate
+
+
+@transaction.atomic
+def switch_or_provision_role(*, current_user: User, role: str, request=None) -> User:
+    """Boshqa rolga (masalan o'qituvchi -> ota-ona) parolsiz o'tish — agar
+    shu telefon raqamida o'sha rol hali mavjud bo'lmasa, ro'yxatdan
+    o'tishsiz avtomatik yaratiladi ("ochiladi") va darhol shunga o'tiladi.
+
+    XAVFSIZLIK: STUDENT hisob HECH QAYSI rolga o'ta olmaydi (hatto mavjud
+    bo'lsa ham) — bu ochiq (hech qanday tasdiqsiz) ro'yxatdan o'tish yo'li,
+    shuning uchun aks holda istalgan kishi o'quvchi sifatida ro'yxatdan
+    o'tib, bir zumda o'qituvchi imkoniyatlariga "o'tib" olar edi."""
+    if current_user.role == User.Role.STUDENT:
+        raise PermissionDenied(_("O'quvchi hisobidan boshqa rolga o'tib bo'lmaydi."))
+    if role not in _SELF_SERVICE_ROLES:
+        raise ValidationError({'role': _("Noto'g'ri rol.")})
+    if role == current_user.role:
+        raise ValidationError({'role': _('Siz allaqachon shu roldasiz.')})
+    if not current_user.phone:
+        raise ValidationError({'role': _("Rol almashtirish uchun avval telefon raqamingizni kiriting.")})
+
+    target = User.objects.filter(
+        phone=current_user.phone, role=role,
+    ).exclude(pk=current_user.pk).first()
+
+    auto_provisioned = False
+    if target is None:
+        target = User(
+            username=_generate_unique_username(f'{current_user.username}_{role}'),
+            role=role,
+            phone=current_user.phone,
+            first_name=current_user.first_name,
+            last_name=current_user.last_name,
+        )
+        if role == User.Role.TEACHER:
+            # Oddiy ro'yxatdan o'tish bilan bir xil qoida — admin
+            # tasdiqlamaguncha kurs/dars ochilmaydi.
+            target.is_approved = False
+        target.set_password(secrets.token_urlsafe(32))
+        target.save()
+        auto_provisioned = True
+        audit.record(
+            action='auth.role_auto_provisioned', actor=current_user, target=target,
+            meta={'role': role}, request=request,
+        )
+
+    audit.record(
+        action='auth.switch', actor=current_user, target=target,
+        meta={'from_user_id': str(current_user.pk), 'auto_provisioned': auto_provisioned},
+        request=request,
     )
     record_login(user=target, request=request)
     return target

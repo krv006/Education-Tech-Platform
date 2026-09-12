@@ -128,6 +128,25 @@ class SwitchAccountView(APIView):
         })
 
 
+class SwitchRoleView(APIView):
+    """Boshqa rolga parolsiz o'tish — agar shu telefon raqamida o'sha rol
+    hali mavjud bo'lmasa, ro'yxatdan o'tishsiz avtomatik yaratiladi.
+    STUDENT hisoblar bu amalni bajara olmaydi (`services.switch_or_provision_role`)."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        role = (request.data.get('role') or '').strip()
+        target = services.switch_or_provision_role(current_user=request.user, role=role, request=request)
+        refresh = RefreshToken.for_user(target)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': MeSerializer(target).data,
+        })
+
+
 class ChildCreateView(APIView):
     permission_classes = [RequirePerm('child.create')]
 
